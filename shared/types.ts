@@ -1,5 +1,10 @@
 // Shared types used by both the Pages Functions API and the Preact frontend.
 
+import type { MemberLocation } from "./location";
+
+export type { LocationSource, MapPin, MemberLocation } from "./location";
+export { locationStamp } from "./location";
+
 export const STICKY_COLORS = [
   "yellow",
   "blue",
@@ -20,6 +25,9 @@ export interface Me {
   /** Notes received since this member last opened their own wall — drives the
    *  red notification dot. Cleared to 0 by viewing your wall. */
   unreadCount: number;
+  /** The member's own city-level pin, null when they never set one. Includes
+   *  the hide-from-map opt-out, which only the member themselves ever sees. */
+  location: MemberLocation | null;
 }
 
 /** One "## About Me"-style block from a cohort profile. Body is Markdown. */

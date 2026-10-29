@@ -13,6 +13,7 @@ import { EditProfile } from "./views/EditProfile";
 import { GiveSticky } from "./views/GiveSticky";
 import { Login } from "./views/Login";
 import { Mentors } from "./views/Mentors";
+import { MapView } from "./views/MapView";
 import { Roster } from "./views/Roster";
 import { SendFeedback } from "./views/SendFeedback";
 import { Wall } from "./views/Wall";
@@ -45,7 +46,11 @@ function useTheme(): { theme: Theme; toggle: () => void } {
 }
 
 /** Plain anchors so the tabs are real, keyboard-navigable links. */
-function DirectoryTabs({ active }: { active: "roster" | "mentors" }) {
+function DirectoryTabs({
+  active,
+}: {
+  active: "roster" | "mentors" | "map";
+}) {
   return (
     <nav class="tabs" aria-label="Directory">
       <div class="tabs__inner">
@@ -62,6 +67,13 @@ function DirectoryTabs({ active }: { active: "roster" | "mentors" }) {
           aria-current={active === "mentors" ? "page" : undefined}
         >
           Mentors
+        </a>
+        <a
+          class="tabs__tab"
+          href="#/map"
+          aria-current={active === "map" ? "page" : undefined}
+        >
+          Map
         </a>
       </div>
     </nav>
@@ -145,13 +157,19 @@ export function App() {
   if (me === null) return <Login />;
 
   let content: JSX.Element;
-  if (route.name === "roster" || route.name === "mentors") {
+  if (route.name === "roster" || route.name === "mentors" || route.name === "map") {
     const onMentors = route.name === "mentors";
     content = (
       <>
         <Nav
           title="Academy"
-          subtitle={onMentors ? "Our mentors" : "Sticky notes between us"}
+          subtitle={
+            onMentors
+              ? "Our mentors"
+              : route.name === "map"
+                ? "Where we are"
+                : "Sticky notes between us"
+          }
           right={
             <HeaderActions
               theme={theme}
@@ -162,7 +180,9 @@ export function App() {
           }
         />
         <DirectoryTabs active={route.name} />
-        {onMentors ? (
+        {route.name === "map" ? (
+          <MapView />
+        ) : onMentors ? (
           <Mentors
             meId={me.id}
             onGive={openGive}
@@ -211,18 +231,35 @@ export function App() {
     <>
       {content}
 
+      {/* On the map the member list must never slide under a floating button,
+          so the FABs join the normal flow there instead of hovering. */}
+      {route.name === "map" && (
+        <div class="fab-group fab-group--flow">
+          <button class="fab fab--letter" onClick={() => openWriteLetter()} aria-label="Write letter">
+            <span aria-hidden="true" style="font-size: 16px;">✉️</span>
+            Write Letter
+          </button>
+          <button class="fab" onClick={() => openGive()} aria-label="New sticky">
+            <Icon name="plus" size={20} />
+            New Sticky
+          </button>
+        </div>
+      )}
+
       <AppFooter onSendFeedback={openFeedback} />
 
-      <div class="fab-group">
-        <button class="fab fab--letter" onClick={() => openWriteLetter()} aria-label="Write letter">
-          <span aria-hidden="true" style="font-size: 16px;">✉️</span>
-          Write Letter
-        </button>
-        <button class="fab" onClick={() => openGive()} aria-label="New sticky">
-          <Icon name="plus" size={20} />
-          New Sticky
-        </button>
-      </div>
+      {route.name !== "map" && (
+        <div class="fab-group">
+          <button class="fab fab--letter" onClick={() => openWriteLetter()} aria-label="Write letter">
+            <span aria-hidden="true" style="font-size: 16px;">✉️</span>
+            Write Letter
+          </button>
+          <button class="fab" onClick={() => openGive()} aria-label="New sticky">
+            <Icon name="plus" size={20} />
+            New Sticky
+          </button>
+        </div>
+      )}
 
       {give.open && (
         <Sheet title="New Sticky" onClose={() => setGive({ open: false })}>

@@ -42,17 +42,27 @@
     "invite": "tsx scripts/invite.ts",
     "invite:remote": "tsx scripts/invite.ts --remote",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.functions.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrate11:local": "wrangler d1 execute stickies-db --local --file=./migrations/0011_learner_locations.sql",
+    "migrate11:remote": "wrangler d1 execute stickies-db --remote --file=./migrations/0011_learner_locations.sql",
+    "set-locations:kuta": "tsx scripts/set-locations-kuta.ts",
+    "set-locations:kuta:remote": "tsx scripts/set-locations-kuta.ts --remote"
   },
   "dependencies": {
     "hono": "^4.6.14",
-    "preact": "^10.25.3"
+    "preact": "^10.25.3",
+    "three": "0.186.1",
+    "topojson-client": "3.1.0",
+    "world-atlas": "2.0.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260708.1",
     "@preact/preset-vite": "^2.9.3",
-    "concurrently": "^9.1.2",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^22.10.2",
+    "@types/three": "^0.186.0",
+    "@types/topojson-client": "^3.1.5",
+    "concurrently": "^9.1.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",

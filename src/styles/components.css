@@ -2776,3 +2776,334 @@
 
 
 
+
+/* ---------------------------------------------------------------------------
+ * Academy map (#/map) and the profile location editor
+ * ------------------------------------------------------------------------- */
+
+:root {
+  /* Derived from ink/canvas so both themes work without per-theme overrides. */
+  --map-land: color-mix(in srgb, var(--ink) 12%, var(--canvas));
+  --map-border: color-mix(in srgb, var(--ink) 30%, var(--canvas));
+  --map-pin: #e8a33d;
+  --map-pin-mentor: #3d8e8a;
+  --map-pin-edge: var(--canvas);
+}
+
+.mapview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.mapview__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.mapview__hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--t-small);
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.seg__btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--t-small);
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.seg__btn[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--canvas);
+}
+
+.mapview__stage {
+  position: relative;
+}
+
+.mapview__canvas {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--canvas);
+  touch-action: manipulation;
+}
+
+.mapcard {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+}
+
+.mapcard--cluster {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+}
+
+.mapcard__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mapcard__name {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: inherit;
+  text-decoration: none;
+}
+
+.mapcard__name:hover {
+  text-decoration: underline;
+}
+
+.mapcard__badge {
+  font-size: var(--t-tiny);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--map-pin-mentor);
+  border: 1px solid currentColor;
+  border-radius: var(--r-pill);
+  padding: 1px 7px;
+}
+
+.mapcard__where {
+  font-size: var(--t-small);
+}
+
+.mapcard__stamp {
+  font-size: var(--t-tiny);
+  color: var(--ink-3);
+}
+
+.mapview__credit {
+  margin: 0;
+  font-size: var(--t-tiny);
+  color: var(--ink-3);
+}
+
+/* Location editor (Edit Profile) */
+
+.locedit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.locedit__current {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.locedit__city {
+  font-weight: 700;
+}
+
+.locedit__stamp,
+.locedit__hint {
+  font-size: var(--t-small);
+  color: var(--ink-3);
+}
+
+.locedit__results {
+  margin: var(--s2) 0 0;
+  padding: var(--s1);
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.locedit__result {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s3);
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.locedit__result:hover,
+.locedit__result:focus-visible {
+  background: var(--fill-strong);
+}
+
+.locedit__country {
+  color: var(--ink-3);
+}
+
+/* The fixed New Sticky button owns the bottom-right lane (~150px wide) on
+ * the Edit Profile route, at every width (the form spans full width on
+ * desktop), so the location controls keep clear of that lane entirely:
+ * reachable and readable at every scroll position, no precision scrolling
+ * needed. */
+.locedit__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  padding-right: 150px;
+}
+
+.locedit__results {
+  margin-right: 150px;
+}
+
+@media (max-width: 640px) {
+  .locedit__actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* The right-lane clearance narrows result rows on phones; stack city over
+   * country so both stay fully readable inside the lane. */
+  .locedit__result {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+}
+
+.locedit__hide {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--t-small);
+  cursor: pointer;
+}
+
+/* Accessible member list: keyboard and no-canvas path to every pin. */
+
+.pinlist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.pinrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s2);
+  border-radius: var(--r-sm);
+  color: inherit;
+  text-decoration: none;
+}
+
+.pinrow:hover,
+.pinrow:focus-visible {
+  background: var(--fill-strong);
+}
+
+.pinrow__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pinrow__name {
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.pinrow__stamp {
+  font-size: var(--t-tiny);
+  color: var(--ink-3);
+}
+
+.maplist__city {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: var(--s2) var(--s3);
+}
+
+.maplist__city + .maplist__city {
+  margin-top: var(--s2);
+}
+
+.maplist__city > summary {
+  cursor: pointer;
+  font-weight: 700;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+}
+
+.maplist__count {
+  font-weight: 400;
+  color: var(--ink-3);
+  font-size: var(--t-small);
+}
+
+.maplist {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+/* Map route: the FABs sit in the normal flow (above the footer) so the member
+ * list, cluster card and map controls are never under a floating button at
+ * any scroll position. Other routes keep the fixed corner placement. */
+.fab-group--flow {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 0 var(--s4) var(--s4);
+}
+
+.fab-group--flow .fab {
+  position: static;
+}
