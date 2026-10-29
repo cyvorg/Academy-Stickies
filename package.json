@@ -63,6 +63,7 @@
     "@types/three": "^0.186.0",
     "@types/topojson-client": "^3.1.5",
     "concurrently": "^9.1.2",
+    "semver": "^6.3.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
@@ -70,6 +71,6 @@
     "wrangler": "^4.20.0"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.13.0 <23.0.0 || >=23.4.0"
   }
 }

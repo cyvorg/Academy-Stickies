@@ -5,6 +5,7 @@ import type { Me } from "../../shared/types";
 import { clearLocation, saveLocation, setLocationHidden } from "../api";
 import { useToast } from "../toast";
 import { SearchGuard } from "../../shared/search-guard";
+import { guardedCitySearch } from "../../shared/city-search";
 
 /**
  * The member's own pin on the academy map: pick a city from the bundled
@@ -40,14 +41,12 @@ export function LocationEditor({
   }
 
   async function onSearch(value: string) {
-    const seq = searchGuard.next();
-    if (value.trim().length < 2) {
-      setResults([]);
-      return;
+    const outcome = await guardedCitySearch(searchGuard, value, ensureCities);
+    if (outcome.status === "ok") {
+      setResults(outcome.results);
+    } else if (outcome.status === "failed") {
+      toast("Couldn't load the city list. Check your connection and try again.", "error");
     }
-    const cities = await ensureCities();
-    if (!searchGuard.owns(seq)) return; // a newer query owns the results
-    setResults(cities.searchCities(value));
   }
 
   async function pick(city: City) {
