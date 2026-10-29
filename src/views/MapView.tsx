@@ -45,6 +45,7 @@ export function MapView() {
   const [mode, setMode] = useState<Mode>("map");
   const [selected, setSelected] = useState<MapPin[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ctlRef = useRef<{ zoomBy(f: number): void; reset(): void } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -68,7 +69,9 @@ export function MapView() {
     loading
       .then((start) => {
         if (!alive || !canvasRef.current) return;
-        destroy = start(canvasRef.current, pins, setSelected);
+        const ctl = start(canvasRef.current, pins, setSelected);
+        ctlRef.current = ctl;
+        destroy = ctl.destroy;
       })
       .catch(() => {
         if (!alive) return;
@@ -83,6 +86,7 @@ export function MapView() {
       });
     return () => {
       alive = false;
+      ctlRef.current = null;
       destroy?.();
     };
   }, [pins, mode]);
@@ -121,7 +125,7 @@ export function MapView() {
             {pins
               ? pins.length === 0
                 ? "No one has pinned their city yet."
-                : `${pins.length} ${pins.length === 1 ? "member" : "members"} on the map. Tap a dot - or find them in the list below.`
+                : `${pins.length} ${pins.length === 1 ? "member" : "members"} on the map. Drag, scroll or pinch to explore - tap a marker, or use the list below.`
               : "Loading the map…"}
           </p>
           <div class="seg" role="group" aria-label="Map style">
@@ -161,6 +165,34 @@ export function MapView() {
                   role="img"
                   aria-label={`World map with ${pins.length} member pins`}
                 />
+                {/* Top-right of the stage: always scrollable clear of the
+                    fixed New Sticky button's bottom-right lane. */}
+                <div class="mapzoom">
+                  <button
+                    type="button"
+                    class="mapzoom__btn"
+                    aria-label="Zoom in"
+                    onClick={() => ctlRef.current?.zoomBy(1.6)}
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    class="mapzoom__btn"
+                    aria-label="Zoom out"
+                    onClick={() => ctlRef.current?.zoomBy(1 / 1.6)}
+                  >
+                    -
+                  </button>
+                  <button
+                    type="button"
+                    class="mapzoom__btn mapzoom__btn--reset"
+                    aria-label="Reset the view"
+                    onClick={() => ctlRef.current?.reset()}
+                  >
+                    &#x27F2;
+                  </button>
+                </div>
               </div>
             )}
 
@@ -233,8 +265,10 @@ export function MapView() {
 
         <p class="mapview__credit">
           Only members who saved a city appear here, and anyone can hide their
-          pin from Edit Profile. City data © GeoNames (CC BY 4.0), map outlines
-          from Natural Earth (public domain).
+          pin from Edit Profile. Markers spread a little around a city so every
+          member stays tappable - the small dot is the city itself. City data ©
+          GeoNames (CC BY 4.0), map outlines from Natural Earth (public
+          domain).
         </p>
       </div>
     </main>

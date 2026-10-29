@@ -1,16 +1,18 @@
 /**
- * The 3D globe: a real WebGL sphere (three.js) textured with the same Natural
- * Earth outlines as the 2D map, one THREE.Points dot per member. Drag to
- * spin; it slowly rotates on its own when left alone. Tap a dot for the
- * member card. Loaded lazily — three.js only lands on devices that open the
- * globe.
+ * The 3D globe: a WebGL sphere (three.js) flat-textured with the same Natural
+ * Earth outlines as the 2D map, one flat dot per member. Drag to spin, scroll
+ * or pinch to zoom; it slowly rotates on its own when left alone. Tap a dot
+ * for the member card. Loaded lazily - three.js only lands on devices that
+ * open the globe.
  */
 import * as THREE from "three";
 import type { MapPin } from "../../shared/types";
 import { paintWorld, spherePosition } from "./geo";
-import { readColors } from "./map2d";
+import { readColors, type MapController } from "./map2d";
 
 const RADIUS = 1;
+const MIN_DIST = 1.9;
+const MAX_DIST = 4.6;
 
 /** Paint the equirectangular world onto an offscreen canvas for the sphere. */
 function earthTexture(colors: ReturnType<typeof readColors>): THREE.Texture {
@@ -34,6 +36,8 @@ function pinPoints(pins: MapPin[], colors: ReturnType<typeof readColors>) {
   const color = new Float32Array(pins.length * 3);
   const member = new THREE.Color(colors.member);
   const mentor = new THREE.Color(colors.mentor);
+  // Every dot sits at its member's true saved city; co-located members stack,
+  // and a tap raycasts through the stack to offer them all.
   pins.forEach((pin, i) => {
     const [x, y, z] = spherePosition(pin.lat, pin.lon, RADIUS * 1.01);
     positions.set([x, y, z], i * 3);
@@ -76,17 +80,14 @@ export function startGlobe(
   canvas: HTMLCanvasElement,
   pins: MapPin[],
   onSelect: (pins: MapPin[]) => void,
-): () => void {
+): MapController {
   const colors = readColors();
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    antialias: true,
-    alpha: true,
-  });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 10);
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 12);
   camera.position.z = 3;
 
+  // Flat unlit sphere: the paper palette stays exactly as on the 2D map.
   const world = new THREE.Group();
   const sphere = new THREE.Mesh(
     new THREE.SphereGeometry(RADIUS, 64, 48),
@@ -97,45 +98,70 @@ export function startGlobe(
   scene.add(world);
 
   // Start facing the pins' center of mass (for the cohort, Kuta).
+  const home = { y: 0, x: 0 };
   if (pins.length) {
     const lat = pins.reduce((s, p) => s + p.lat, 0) / pins.length;
     const lon = pins.reduce((s, p) => s + p.lon, 0) / pins.length;
-    world.rotation.y = THREE.MathUtils.degToRad(-lon - 90);
-    world.rotation.x = THREE.MathUtils.degToRad(lat * 0.5);
+    home.y = THREE.MathUtils.degToRad(-lon - 90);
+    home.x = THREE.MathUtils.degToRad(lat * 0.5);
+    world.rotation.y = home.y;
+    world.rotation.x = home.x;
   }
 
-  let dragging = false;
+  // --- interaction: drag to spin, pinch or wheel to zoom, tap to select ---
+  const pointers = new Map<number, { x: number; y: number }>();
   let moved = false;
-  let lastX = 0;
-  let lastY = 0;
+  let pinchDist = 0;
   let autoRotate = true;
+  let autoTimer = 0;
+
+  const clampDist = () => {
+    camera.position.z = THREE.MathUtils.clamp(camera.position.z, MIN_DIST, MAX_DIST);
+  };
+  const pauseAuto = () => {
+    autoRotate = false;
+    window.clearTimeout(autoTimer);
+    autoTimer = window.setTimeout(() => (autoRotate = true), 4000);
+  };
 
   const onDown = (e: PointerEvent) => {
-    dragging = true;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     moved = false;
-    autoRotate = false;
-    lastX = e.clientX;
-    lastY = e.clientY;
+    pauseAuto();
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    }
     canvas.setPointerCapture(e.pointerId);
   };
   const onMove = (e: PointerEvent) => {
-    if (!dragging) return;
-    const dx = e.clientX - lastX;
-    const dy = e.clientY - lastY;
+    if (!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId)!;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    pauseAuto();
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist > 0 && dist > 0) {
+        camera.position.z *= pinchDist / dist;
+        clampDist();
+        moved = true;
+      }
+      pinchDist = dist;
+      return;
+    }
+    const dx = e.clientX - prev.x;
+    const dy = e.clientY - prev.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
-    world.rotation.y += dx * 0.005;
-    world.rotation.x = THREE.MathUtils.clamp(
-      world.rotation.x + dy * 0.003,
-      -1.2,
-      1.2,
-    );
-    lastX = e.clientX;
-    lastY = e.clientY;
+    if (moved) {
+      world.rotation.y += dx * 0.005;
+      world.rotation.x = THREE.MathUtils.clamp(world.rotation.x + dy * 0.003, -1.2, 1.2);
+    }
   };
   const onUp = (e: PointerEvent) => {
-    dragging = false;
-    window.setTimeout(() => (autoRotate = true), 4000);
-    if (moved) return; // a drag, not a tap
+    pointers.delete(e.pointerId);
+    pinchDist = 0;
+    if (moved || pointers.size > 0) return; // a drag/pinch, not a tap
     const rect = canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -152,6 +178,12 @@ export function startGlobe(
         .filter((h) => h.index !== undefined)
         .map((h) => pins[h.index as number]),
     );
+  };
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    pauseAuto();
+    camera.position.z *= Math.exp(e.deltaY * 0.0012);
+    clampDist();
   };
 
   function resize() {
@@ -177,20 +209,40 @@ export function startGlobe(
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onUp);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
   window.addEventListener("resize", resize);
+  canvas.style.cursor = "grab";
   resize();
   tick();
 
-  return () => {
-    cancelAnimationFrame(raf);
-    canvas.removeEventListener("pointerdown", onDown);
-    canvas.removeEventListener("pointermove", onMove);
-    canvas.removeEventListener("pointerup", onUp);
-    window.removeEventListener("resize", resize);
-    sphere.geometry.dispose();
-    (sphere.material as THREE.Material).dispose();
-    points.geometry.dispose();
-    (points.material as THREE.Material).dispose();
-    renderer.dispose();
+  return {
+    zoomBy(factor: number) {
+      camera.position.z /= factor;
+      clampDist();
+      pauseAuto();
+    },
+    reset() {
+      camera.position.z = 3;
+      world.rotation.y = home.y;
+      world.rotation.x = home.x;
+      autoRotate = true;
+      onSelect([]);
+    },
+    destroy() {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(autoTimer);
+      canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onUp);
+      canvas.removeEventListener("wheel", onWheel);
+      window.removeEventListener("resize", resize);
+      sphere.geometry.dispose();
+      (sphere.material as THREE.Material).dispose();
+      points.geometry.dispose();
+      (points.material as THREE.Material).dispose();
+      renderer.dispose();
+    },
   };
 }

@@ -2838,13 +2838,43 @@
   position: relative;
 }
 
+.mapzoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mapzoom__btn {
+  width: 34px;
+  height: 34px;
+  border: 2px solid var(--ink);
+  border-radius: var(--r-sm, 8px);
+  background: var(--canvas);
+  color: var(--ink);
+  box-shadow: 2px 3px 0 var(--ink);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mapzoom__btn:active {
+  transform: translate(1px, 2px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+
 .mapview__canvas {
   display: block;
   width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--canvas);
-  touch-action: manipulation;
+  /* Pan/pinch belong to the map, not the page. */
+  touch-action: none;
 }
 
 .mapcard {
