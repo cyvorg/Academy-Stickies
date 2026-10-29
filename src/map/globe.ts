@@ -76,6 +76,25 @@ function dotTexture(): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
+/** Pins under a tap ray, far hemisphere occluded by the sphere: without the
+ * sphere test a tap also returns dots directly behind the globe on the same
+ * ray. Dots sit at 1.01 * RADIUS, so allow a small margin past the surface. */
+export function pickGlobePins(
+  raycaster: THREE.Raycaster,
+  points: THREE.Points,
+  sphere: THREE.Mesh,
+  pins: MapPin[],
+): MapPin[] {
+  // All intersected dots, nearest first: co-located pins come back as a
+  // cluster so nobody has to rotate-and-guess for an overlapping member.
+  const hits = raycaster.intersectObject(points);
+  const surface = raycaster.intersectObject(sphere)[0];
+  const limit = surface ? surface.distance + 0.05 : Infinity;
+  return hits
+    .filter((h) => h.index !== undefined && h.distance <= limit)
+    .map((h) => pins[h.index as number]);
+}
+
 export function startGlobe(
   canvas: HTMLCanvasElement,
   pins: MapPin[],
@@ -170,19 +189,7 @@ export function startGlobe(
     const raycaster = new THREE.Raycaster();
     raycaster.params.Points = { threshold: 0.03 };
     raycaster.setFromCamera(ndc, camera);
-    // All intersected dots, nearest first: co-located pins come back as a
-    // cluster so nobody has to rotate-and-guess for an overlapping member.
-    const hits = raycaster.intersectObject(points);
-    // Occlude the far hemisphere: without the sphere test a tap also returns
-    // dots directly behind the globe on the same ray. Dots sit at 1.01 *
-    // RADIUS, so allow a small margin past the surface.
-    const surface = raycaster.intersectObject(sphere)[0];
-    const limit = surface ? surface.distance + 0.05 : Infinity;
-    onSelect(
-      hits
-        .filter((h) => h.index !== undefined && h.distance <= limit)
-        .map((h) => pins[h.index as number]),
-    );
+    onSelect(pickGlobePins(raycaster, points, sphere, pins));
   };
   const onWheel = (e: WheelEvent) => {
     e.preventDefault();

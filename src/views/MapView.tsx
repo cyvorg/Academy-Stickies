@@ -136,7 +136,9 @@ export function MapView() {
               ? pins.length === 0
                 ? "No one has pinned their city yet."
                 : `${pins.length} ${pins.length === 1 ? "member" : "members"} on the map. Drag, scroll or pinch to explore - tap a marker, or use the list below.`
-              : "Loading the map…"}
+              : loadFailed
+                ? "Couldn't load the map."
+                : "Loading the map…"}
           </p>
           <div class="seg" role="group" aria-label="Map style">
             <button

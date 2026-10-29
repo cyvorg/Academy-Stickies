@@ -136,3 +136,19 @@ export function spiderfyPositions(
     return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
   });
 }
+
+/** Rescale a view from old canvas base size (w,h) to a new one (nw,nh),
+ * keeping every base point at the same relative screen position. */
+export function rescaleView(
+  v: ViewState,
+  w: number,
+  h: number,
+  nw: number,
+  nh: number,
+): ViewState {
+  return clampView(
+    { z: v.z, cx: (v.cx / w) * nw, cy: (v.cy / h) * nh },
+    nw,
+    nh,
+  );
+}

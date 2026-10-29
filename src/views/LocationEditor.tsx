@@ -4,6 +4,7 @@ import { locationStamp } from "../../shared/types";
 import type { Me } from "../../shared/types";
 import { clearLocation, saveLocation, setLocationHidden } from "../api";
 import { useToast } from "../toast";
+import { SearchGuard } from "../../shared/search-guard";
 
 /**
  * The member's own pin on the academy map: pick a city from the bundled
@@ -22,10 +23,9 @@ export function LocationEditor({
   const [results, setResults] = useState<City[]>([]);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Monotonic query id: an async search that resolves late (the first one
-  // waits for the dataset import) must not overwrite results for a newer
-  // query.
-  const searchSeq = useRef(0);
+  // Monotonic query guard: an async search that resolves late (the first one
+  // waiting on the cities chunk) must never overwrite a newer query's results.
+  const searchGuard = useRef(new SearchGuard()).current;
   const citiesModule = useRef<typeof import("../../shared/cities") | null>(
     null,
   );
@@ -40,13 +40,13 @@ export function LocationEditor({
   }
 
   async function onSearch(value: string) {
-    const seq = ++searchSeq.current;
+    const seq = searchGuard.next();
     if (value.trim().length < 2) {
       setResults([]);
       return;
     }
     const cities = await ensureCities();
-    if (seq !== searchSeq.current) return; // a newer query owns the results
+    if (!searchGuard.owns(seq)) return; // a newer query owns the results
     setResults(cities.searchCities(value));
   }
 
