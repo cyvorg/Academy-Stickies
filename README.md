@@ -35,7 +35,7 @@ Guidelines (SF typography, translucent materials, light/dark, grouped forms).
 
 ## Prerequisites
 
-- Node 18+ and a Cloudflare account (`npx wrangler login`).
+- Node 22.5+ (wrangler 4 requires 22; the test suite's in-memory SQLite needs 22.5) and a Cloudflare account (`npx wrangler login`).
 - **For email:** a domain in your Cloudflare account, onboarded for sending
   (`npx wrangler email sending enable <domain>` — adds SPF/DKIM/DMARC; automatic
   if the domain uses Cloudflare DNS), plus a Cloudflare API token scoped to

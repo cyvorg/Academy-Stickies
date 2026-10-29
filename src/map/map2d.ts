@@ -92,12 +92,37 @@ export function startMap(
     const parent = canvas.parentElement;
     if (!parent || !ctx) return false;
     const dpr = window.devicePixelRatio || 1;
-    w = parent.clientWidth;
-    h = Math.max(220, Math.round(w * 0.52));
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
+    const nw = parent.clientWidth;
+    const nh = Math.max(220, Math.round(nw * 0.52));
+    if (nw !== w || nh !== h) {
+      // Rescale the view into the new base size: cx/cy are base pixels of
+      // the OLD canvas, so without this a resize or phone rotation paints
+      // the world off-center until the next pan or zoom re-clamps.
+      if (w > 0 && h > 0 && view.cx !== 0.5) {
+        view = clampView(
+          { z: view.z, cx: (view.cx / w) * nw, cy: (view.cy / h) * nh },
+          nw,
+          nh,
+        );
+        // The spiderfy anchor is stored in base coordinates too.
+        if (spiderCity) {
+          spiderCity = {
+            ...spiderCity,
+            bx: (spiderCity.bx / w) * nw,
+            by: (spiderCity.by / h) * nh,
+          };
+        }
+      }
+      w = nw;
+      h = nh;
+      // Assigning canvas.width/height reallocates the backing store (and
+      // clears it) - only do it when the size actually changed, not on
+      // every draw during a pan.
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return true;
   }

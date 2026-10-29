@@ -60,3 +60,16 @@ export function locationStamp(pin: {
  */
 export const ADMIN_PIN_FILTER_SQL =
   "COALESCE(is_mentor, 0) = 0 AND city IS NULL AND location_source IS NULL AND COALESCE(location_hidden, 0) = 0";
+
+/**
+ * Members can exist without any profile row (the roster seed inserts only
+ * members). They have never made a location choice and cannot have opted out
+ * - the opt-out lives on profiles - so the initial cohort placement includes
+ * them by inserting their profile rows. The slug placeholder is the member
+ * id: profile-less members have no roster card, so it is never rendered.
+ */
+export const ADMIN_PIN_INSERT_SQL = `INSERT INTO profiles
+  (member_id, slug, city, country, lat, lon, city_id, location_updated_at, location_source, updated_at)
+SELECT m.id, m.id, :city, :country, :lat, :lon, :city_id, :now, 'admin', :now
+FROM members m LEFT JOIN profiles p ON p.member_id = m.id
+WHERE p.member_id IS NULL`;

@@ -15,15 +15,20 @@
  */
 import { writeFileSync, unlinkSync } from "node:fs";
 import { KUTA } from "../shared/cities";
-import { ADMIN_PIN_FILTER_SQL } from "../shared/location";
+import { ADMIN_PIN_FILTER_SQL, ADMIN_PIN_INSERT_SQL } from "../shared/location";
 import { d1ExecFile, d1Query, isRemote, sqlQuote } from "./util";
 
 async function main() {
   const remote = isRemote();
   const dryRun = process.argv.includes("--dry-run");
 
+  // Existing profile rows matching the filter, plus members with no profile
+  // row at all (seeded roster members who never touched their location).
   const [{ n }] = d1Query<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM profiles p WHERE ${ADMIN_PIN_FILTER_SQL}`,
+    `SELECT
+       (SELECT COUNT(*) FROM profiles p WHERE ${ADMIN_PIN_FILTER_SQL}) +
+       (SELECT COUNT(*) FROM members m LEFT JOIN profiles p2 ON p2.member_id = m.id
+        WHERE p2.member_id IS NULL) AS n`,
     remote,
   );
   console.log(
@@ -34,6 +39,12 @@ async function main() {
 
   const now = Date.now();
   const file = `.tmp-set-locations-kuta-${now}.sql`;
+  const insertSql = ADMIN_PIN_INSERT_SQL.replace(":city", sqlQuote(KUTA.name))
+    .replace(":country", sqlQuote(KUTA.country))
+    .replace(":lat", String(KUTA.lat))
+    .replace(":lon", String(KUTA.lon))
+    .replace(":city_id", String(KUTA.id))
+    .replace(/:now/g, String(now));
   writeFileSync(
     file,
     `UPDATE profiles SET
@@ -44,7 +55,8 @@ async function main() {
        city_id = ${KUTA.id},
        location_updated_at = ${now},
        location_source = 'admin'
-     WHERE ${ADMIN_PIN_FILTER_SQL};\n`,
+     WHERE ${ADMIN_PIN_FILTER_SQL};
+${insertSql};\n`,
   );
   try {
     d1ExecFile(file, remote);

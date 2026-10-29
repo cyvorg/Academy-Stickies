@@ -22,6 +22,10 @@ export function LocationEditor({
   const [results, setResults] = useState<City[]>([]);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Monotonic query id: an async search that resolves late (the first one
+  // waits for the dataset import) must not overwrite results for a newer
+  // query.
+  const searchSeq = useRef(0);
   const citiesModule = useRef<typeof import("../../shared/cities") | null>(
     null,
   );
@@ -36,11 +40,13 @@ export function LocationEditor({
   }
 
   async function onSearch(value: string) {
+    const seq = ++searchSeq.current;
     if (value.trim().length < 2) {
       setResults([]);
       return;
     }
     const cities = await ensureCities();
+    if (seq !== searchSeq.current) return; // a newer query owns the results
     setResults(cities.searchCities(value));
   }
 

@@ -455,13 +455,21 @@ app.put("/me/location", requireAuth, async (c) => {
   const city = cityById(cityId);
   if (!city) return c.json({ error: "unknown city" }, 400);
 
+  // Upsert: seeded members can exist without a profile row (profiles is
+  // LEFT JOINed in requireAuth), and an UPDATE-only write silently dropped
+  // their saved city. The slug placeholder is the member id - profile-less
+  // members have no roster card, so it is never rendered.
   await c.env.DB.prepare(
-    `UPDATE profiles SET
-       city = ?, country = ?, lat = ?, lon = ?, city_id = ?,
-       location_updated_at = ?, location_source = 'member'
-     WHERE member_id = ?`,
+    `INSERT INTO profiles
+       (member_id, slug, city, country, lat, lon, city_id, location_updated_at, location_source, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'member', ?)
+     ON CONFLICT(member_id) DO UPDATE SET
+       city = excluded.city, country = excluded.country, lat = excluded.lat,
+       lon = excluded.lon, city_id = excluded.city_id,
+       location_updated_at = excluded.location_updated_at,
+       location_source = 'member'`,
   )
-    .bind(city.name, city.country, city.lat, city.lon, city.id, Date.now(), member.id)
+    .bind(member.id, member.id, city.name, city.country, city.lat, city.lon, city.id, Date.now(), Date.now())
     .run();
 
   return c.json(await meWithUnread(c, { ...member, city: city.name, country: city.country, lat: city.lat, lon: city.lon, city_id: city.id, location_updated_at: Date.now(), location_source: "member" } as MemberRow));
@@ -476,13 +484,19 @@ app.put("/me/location", requireAuth, async (c) => {
 app.delete("/me/location", requireAuth, async (c) => {
   const member = c.get("member");
   const now = Date.now();
+  // Upsert: the removal tombstone (location_source='member', no city) must
+  // persist even for a member without a profile row, or a later admin
+  // initializer rerun could pin someone who took their pin down.
   await c.env.DB.prepare(
-    `UPDATE profiles SET
+    `INSERT INTO profiles
+       (member_id, slug, city, country, lat, lon, city_id, location_updated_at, location_source, updated_at)
+     VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?, 'member', ?)
+     ON CONFLICT(member_id) DO UPDATE SET
        city = NULL, country = NULL, lat = NULL, lon = NULL, city_id = NULL,
-       location_updated_at = ?, location_source = 'member'
-     WHERE member_id = ?`,
+       location_updated_at = excluded.location_updated_at,
+       location_source = 'member'`,
   )
-    .bind(now, member.id)
+    .bind(member.id, member.id, now, now)
     .run();
   return c.json(await meWithUnread(c, { ...member, city: null, country: null, lat: null, lon: null, city_id: null, location_updated_at: now, location_source: "member" } as MemberRow));
 });
@@ -491,12 +505,21 @@ app.delete("/me/location", requireAuth, async (c) => {
 // hidden member keeps their saved city — only its visibility changes.
 app.put("/me/location-visibility", requireAuth, async (c) => {
   const member = c.get("member");
-  const body = await c.req.json().catch(() => ({}));
-  const hidden = (body as { hidden?: unknown }).hidden === true;
+  // Strict body: a malformed or missing payload must never WRITE - the old
+  // catch-all read it as hidden=false and silently re-exposed a hidden city.
+  const body = await c.req.json().catch(() => null);
+  const hiddenRaw = (body as { hidden?: unknown } | null)?.hidden;
+  if (typeof hiddenRaw !== "boolean") {
+    return c.json({ error: "hidden must be a boolean" }, 400);
+  }
+  const hidden = hiddenRaw;
   await c.env.DB.prepare(
-    "UPDATE profiles SET location_hidden = ? WHERE member_id = ?",
+    `INSERT INTO profiles (member_id, slug, location_hidden, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(member_id) DO UPDATE SET
+       location_hidden = excluded.location_hidden`,
   )
-    .bind(hidden ? 1 : 0, member.id)
+    .bind(member.id, member.id, hidden ? 1 : 0, Date.now())
     .run();
   return c.json(
     await meWithUnread(c, { ...member, location_hidden: hidden ? 1 : 0 } as MemberRow),

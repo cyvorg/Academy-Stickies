@@ -42,20 +42,30 @@ function PinRow({ pin }: { pin: MapPin }) {
 export function MapView() {
   const toast = useToast();
   const [pins, setPins] = useState<MapPin[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [mode, setMode] = useState<Mode>("map");
   const [selected, setSelected] = useState<MapPin[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctlRef = useRef<{ zoomBy(f: number): void; reset(): void } | null>(null);
 
+  const [loadAttempt, setLoadAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
+    setLoadFailed(false);
     getMapPins()
       .then((p) => alive && setPins(p))
-      .catch(() => alive && toast("Couldn't load the map.", "error"));
+      .catch(() => {
+        if (!alive) return;
+        // A failed load must not sit on the spinner forever: show a real
+        // error state with a retry instead of "Loading the map...". (Do not
+        // setPins([]) here - an empty list reads as "nobody pinned yet".)
+        setLoadFailed(true);
+        toast("Couldn't load the map.", "error");
+      });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loadAttempt]);
 
   useEffect(() => {
     if (!pins || !canvasRef.current) return;
@@ -148,7 +158,18 @@ export function MapView() {
           </div>
         </div>
 
-        {pins === null ? (
+        {pins === null && loadFailed ? (
+          <div class="center-screen">
+            <p>The map didn't load.</p>
+            <button
+              type="button"
+              class="btn btn--plain"
+              onClick={() => setLoadAttempt((n) => n + 1)}
+            >
+              Try again
+            </button>
+          </div>
+        ) : pins === null ? (
           <div class="center-screen">
             <Spinner />
           </div>

@@ -173,9 +173,14 @@ export function startGlobe(
     // All intersected dots, nearest first: co-located pins come back as a
     // cluster so nobody has to rotate-and-guess for an overlapping member.
     const hits = raycaster.intersectObject(points);
+    // Occlude the far hemisphere: without the sphere test a tap also returns
+    // dots directly behind the globe on the same ray. Dots sit at 1.01 *
+    // RADIUS, so allow a small margin past the surface.
+    const surface = raycaster.intersectObject(sphere)[0];
+    const limit = surface ? surface.distance + 0.05 : Infinity;
     onSelect(
       hits
-        .filter((h) => h.index !== undefined)
+        .filter((h) => h.index !== undefined && h.distance <= limit)
         .map((h) => pins[h.index as number]),
     );
   };
