@@ -2907,6 +2907,10 @@
 
 .admin-tag--hidden {
   background: #a33;
+  /* Explicit white: the base .admin-tag color flips with --surface, which
+     goes dark in dark mode and measured 2.12:1 on this red. #fff on #a33
+     is 6.5:1 in both themes. */
+  color: #fff;
 }
 
 .admin .btn--danger {
