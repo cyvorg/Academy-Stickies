@@ -446,7 +446,15 @@ describe("admin review hardening (PR5 CodeRabbit findings)", () => {
 
   it("member add still succeeds with emailed:false when the send fails", async () => {
     const admin = await cookieFor("m-admin");
-    env.BREVO_API_KEY = "bad-key";
+    // Network-isolated: stub fetch so no request ever leaves the test
+    // process. A 500 from the "email provider" exercises the throw path.
+    const realFetch = globalThis.fetch;
+    let outboundCalls = 0;
+    globalThis.fetch = (async () => {
+      outboundCalls += 1;
+      return new Response("provider down", { status: 500 });
+    }) as typeof fetch;
+    env.BREVO_API_KEY = "test-key";
     env.EMAIL_FROM = "academy@fixture.test";
     try {
       const res = await call("/admin/members", {
@@ -454,11 +462,13 @@ describe("admin review hardening (PR5 CodeRabbit findings)", () => {
         cookie: admin,
         body: { name: "Harden Mail", email: "hmail@fixture.test" },
       });
+      expect(outboundCalls).toBe(1); // the stub, not the network, answered
       expect(res.status).toBe(201);
       expect(res.json.emailed).toBe(false);
       const row = await DB.prepare("SELECT id FROM members WHERE email = 'hmail@fixture.test'").first();
       expect(row).toBeTruthy();
     } finally {
+      globalThis.fetch = realFetch;
       delete env.BREVO_API_KEY;
       delete env.EMAIL_FROM;
     }
