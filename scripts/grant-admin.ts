@@ -58,8 +58,16 @@ function main() {
   // "already an admin" and never print the link.)
   let origin: string | null = null;
   if (printLink) {
+    // Resolve the link origin WITHOUT leaking .dev.vars into the environment
+    // the write inherits: a CLOUDFLARE_API_TOKEN there would switch wrangler
+    // from the OAuth login used for the lookup to a possibly underprivileged
+    // token, making the grant fail. Snapshot and restore around the read.
+    const before = new Set(Object.keys(process.env));
     loadDevVars();
     origin = remote ? remoteSiteUrl() : siteUrl();
+    for (const key of Object.keys(process.env)) {
+      if (!before.has(key)) delete process.env[key];
+    }
   }
 
   // Granting admin also ROTATES the member's magic-link token: their

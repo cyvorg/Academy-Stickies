@@ -494,6 +494,27 @@ describe("admin review hardening round 2", () => {
     ).first();
     expect(Number(audit.n)).toBe(0);
   });
+
+  it("member PATCH rejects a string is_mentor instead of granting the role", async () => {
+    await DB.exec(
+      "INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES ('m-sm', 'String Mentor', 'sm@fixture.test', 'tok-sm', 1, 0, 1700000004004);",
+    );
+    const admin = await cookieFor("m-admin");
+    const res = await call("/admin/members/m-sm", {
+      method: "PATCH",
+      cookie: admin,
+      body: { is_mentor: "false" },
+    });
+    expect(res.status).toBe(400);
+    const row = await DB.prepare(
+      "SELECT is_mentor FROM profiles WHERE member_id = 'm-sm'",
+    ).first();
+    expect(row).toBeNull();
+    const audit = await DB.prepare(
+      "SELECT COUNT(*) AS n FROM admin_actions WHERE action = 'member.update' AND target_id = 'm-sm'",
+    ).first();
+    expect(Number(audit.n)).toBe(0);
+  });
 });
 
 describe("admin member PATCH atomicity (adapter-injected failure)", () => {

@@ -1280,6 +1280,12 @@ app.patch("/admin/members/:id", requireAdmin, async (c) => {
   if (body.email !== undefined && typeof body.email !== "string") {
     return c.json({ error: "Email must be a string." }, 400);
   }
+  // is_mentor drives a role write: a truthy non-boolean ({"is_mentor":"false"})
+  // would silently grant the role, so reject it before the first write, as the
+  // hide and restore routes already do.
+  if (body.is_mentor !== undefined && typeof body.is_mentor !== "boolean") {
+    return c.json({ error: "is_mentor must be a boolean." }, 400);
+  }
   const name = body.name === undefined ? undefined : (body.name as string).trim().slice(0, 120);
   if (name !== undefined && !name) return c.json({ error: "Name cannot be empty." }, 400);
   const email = body.email === undefined ? undefined : (body.email as string).trim().toLowerCase().slice(0, 200);
