@@ -336,3 +336,29 @@ describe("cohorts: roster management routes", () => {
     expect(p.session).toBe("PM");
   });
 });
+
+describe("roster durability vs CLI cohort import", () => {
+  it("tagline/role writes stamp edited_at (import skips self-edited rows); session-only writes do not", async () => {
+    // Use m-admin (profile-less, untouched by earlier tests) for ordering independence.
+    // session-only write: no edited_at, session stays import-owned
+    await call("/admin/roster/m-admin", {
+      method: "PATCH", cookie: await cookieFor("m-admin"), body: { session: "AM" },
+    });
+    let p = await DB.prepare("SELECT edited_at FROM profiles WHERE member_id = 'm-admin'").first();
+    expect(p.edited_at).toBeNull();
+
+    // tagline write: edited_at stamped -> import's WHERE edited_at IS NULL skips the row
+    await call("/admin/roster/m-admin", {
+      method: "PATCH", cookie: await cookieFor("m-admin"), body: { tagline: "Admin words" },
+    });
+    p = await DB.prepare("SELECT tagline, edited_at FROM profiles WHERE member_id = 'm-admin'").first();
+    expect(p.tagline).toBe("Admin words");
+    expect(p.edited_at).toBeGreaterThan(0);
+
+    // the import's own guard would now exclude this row from overwrite
+    const importWouldSkip = await DB.prepare(
+      "SELECT 1 AS x FROM profiles WHERE member_id = 'm-admin' AND edited_at IS NULL",
+    ).first();
+    expect(importWouldSkip).toBeNull();
+  });
+});

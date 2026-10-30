@@ -447,7 +447,8 @@ function RosterRow({ entry, onChanged }: { entry: AdminRosterEntry; onChanged: (
           {(["AM", "PM", null] as const).map((s) => (
             <button
               key={s ?? "none"}
-              class={`btn ${entry.session === s ? "btn--filled" : ""}`}
+              class="btn"
+              aria-pressed={entry.session === s}
               disabled={busy}
               onClick={() => save({ session: s })}
             >

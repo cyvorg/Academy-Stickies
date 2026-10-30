@@ -2933,3 +2933,20 @@
     justify-content: flex-start;
   }
 }
+
+/* Admin cohort roster */
+.admin-roster-fields {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.admin-roster-fields .field { flex: 1 1 140px; }
+.admin-session { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Selected session: same filled pattern as .admin-tab--active (ink flips in
+   dark mode via the token, so both themes stay readable). */
+.admin-session .btn[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}

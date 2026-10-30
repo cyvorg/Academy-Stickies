@@ -1614,14 +1614,20 @@ app.patch("/admin/roster/:id", requireAdmin, async (c) => {
 
   // Upsert: profiles.slug and updated_at are NOT NULL (0002), so an insert
   // must supply both - same constraint the review caught on mentor creation.
+  // Tagline/role writes stamp edited_at, the same marker member self-edits
+  // set: the CLI cohort import skips rows with edited_at, so admin words
+  // survive re-imports exactly like a member's own edits. A session-only
+  // write does NOT stamp it - session remains owned by the import.
+  const stampsEdited = tagline !== undefined || role !== undefined;
   await c.env.DB.prepare(
-    `INSERT INTO profiles (member_id, slug, session, tagline, role, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO profiles (member_id, slug, session, tagline, role, updated_at, edited_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(member_id) DO UPDATE SET
        session = CASE WHEN ? THEN excluded.session ELSE profiles.session END,
        tagline = CASE WHEN ? THEN excluded.tagline ELSE profiles.tagline END,
        role = CASE WHEN ? THEN excluded.role ELSE profiles.role END,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at,
+       edited_at = CASE WHEN ? THEN excluded.edited_at ELSE profiles.edited_at END`,
   ).bind(
     id,
     slugFromName(target.name),
@@ -1629,9 +1635,11 @@ app.patch("/admin/roster/:id", requireAdmin, async (c) => {
     tagline ?? null,
     role ?? null,
     Date.now(),
+    stampsEdited ? Date.now() : null,
     session !== undefined ? 1 : 0,
     tagline !== undefined ? 1 : 0,
     role !== undefined ? 1 : 0,
+    stampsEdited ? 1 : 0,
   ).run();
 
   await logAdminAction(c, "profile.update", "member", id, changed.join(","));
