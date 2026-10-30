@@ -855,7 +855,6 @@ app.delete("/stickies/:id", requireSession, async (c) => {
   }
 
   await c.env.DB.prepare("DELETE FROM stickies WHERE id = ?").bind(id).run();
-  await logAdminAction(c, "sticky.delete", "sticky", id);
   if (sticky.photo_key) {
     c.executionCtx.waitUntil(c.env.MEDIA.delete(sticky.photo_key).catch(() => {}));
   }
@@ -1011,7 +1010,6 @@ app.delete("/letters/:id", requireSession, async (c) => {
   }
 
   await c.env.DB.prepare("DELETE FROM letters WHERE id = ?").bind(id).run();
-  await logAdminAction(c, "letter.delete", "letter", id);
   if (letter.photo_key) {
     c.executionCtx.waitUntil(c.env.MEDIA.delete(letter.photo_key).catch(() => {}));
   }
@@ -1189,8 +1187,8 @@ app.post("/admin/members", requireAdmin, async (c) => {
 
   if (body.is_mentor) {
     await c.env.DB.prepare(
-      "INSERT INTO profiles (member_id, is_mentor) VALUES (?, 1) ON CONFLICT(member_id) DO UPDATE SET is_mentor = 1",
-    ).bind(id).run();
+      "INSERT INTO profiles (member_id, slug, is_mentor, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(member_id) DO UPDATE SET is_mentor = 1",
+    ).bind(id, slugFromName(name), Date.now()).run();
   }
   await logAdminAction(c, "member.add", "member", id, email);
   // Another member's sign-in token never leaves the server in an API
@@ -1207,8 +1205,8 @@ app.post("/admin/members", requireAdmin, async (c) => {
 app.patch("/admin/members/:id", requireAdmin, async (c) => {
   const id = c.req.param("id");
   const target = await c.env.DB.prepare(
-    "SELECT id FROM members WHERE id = ?",
-  ).bind(id).first();
+    "SELECT id, name FROM members WHERE id = ?",
+  ).bind(id).first<{ id: string; name: string }>();
   if (!target) return c.json({ error: "not found" }, 404);
 
   const body = await c.req
@@ -1230,9 +1228,10 @@ app.patch("/admin/members/:id", requireAdmin, async (c) => {
     await c.env.DB.prepare("UPDATE members SET email = ? WHERE id = ?").bind(email, id).run();
   }
   if (body.is_mentor !== undefined) {
+    const slugName = body.name ? String(body.name) : target.name;
     await c.env.DB.prepare(
-      "INSERT INTO profiles (member_id, is_mentor) VALUES (?, ?) ON CONFLICT(member_id) DO UPDATE SET is_mentor = excluded.is_mentor",
-    ).bind(id, body.is_mentor ? 1 : 0).run();
+      "INSERT INTO profiles (member_id, slug, is_mentor, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET is_mentor = excluded.is_mentor",
+    ).bind(id, slugFromName(slugName), body.is_mentor ? 1 : 0, Date.now()).run();
   }
   await logAdminAction(c, "member.update", "member", id,
     Object.keys(body).filter((k) => (body as Record<string, unknown>)[k] !== undefined).join(","));
@@ -1271,16 +1270,23 @@ app.post("/admin/members/:id/resend-link", requireAdmin, async (c) => {
   ).bind(id).first<{ id: string; name: string; email: string }>();
   if (!member) return c.json({ error: "not found" }, 404);
 
-  // Rotate the token on every resend: an old leaked link dies with the new one.
+  // Rotate the token on every resend: an old leaked link dies with the new
+  // one. When email is configured, send BEFORE rotating so a Brevo failure
+  // leaves the member's existing link alive instead of stranding them.
   const loginToken = randomToken();
+  if (emailConfigured(c.env)) {
+    const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
+    try {
+      await sendMagicLink(c.env, member.email, member.name, link);
+    } catch (err) {
+      console.error("sendMagicLink failed", err);
+      return c.json({ error: "Could not send the sign-in email. Their existing link still works." }, 502);
+    }
+  }
   await c.env.DB.prepare("UPDATE members SET login_token = ? WHERE id = ?")
     .bind(loginToken, id).run();
   await logAdminAction(c, "member.resend-link", "member", id);
-  if (emailConfigured(c.env)) {
-    const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
-    await sendMagicLink(c.env, member.email, member.name, link);
-    return c.json({ ok: true, emailed: true });
-  }
+  if (emailConfigured(c.env)) return c.json({ ok: true, emailed: true });
   // No email configured (local dev): the token stays in D1, never in a
   // response. scripts/get-login-link.ts prints the link instead.
   return c.json({ ok: true, emailed: false });
@@ -1304,13 +1310,16 @@ app.delete("/admin/members/:id", requireAdmin, async (c) => {
     return c.json({ error: "Revoke their admin flag (scripts/grant-admin.ts) before deleting." }, 400);
   }
 
+  // Only media owned by rows that actually disappear: the member's avatar and
+  // profile photo/thumb, and photos on notes/letters they RECEIVED (cascade).
+  // Content they AUTHORED survives (author_id SET NULL) - its photos must too.
   const media = await c.env.DB.prepare(
     `SELECT avatar_key AS key FROM members WHERE id = ? AND avatar_key IS NOT NULL
      UNION ALL SELECT photo_key FROM profiles WHERE member_id = ? AND photo_key IS NOT NULL
      UNION ALL SELECT thumb_key FROM profiles WHERE member_id = ? AND thumb_key IS NOT NULL
-     UNION ALL SELECT photo_key FROM stickies WHERE (recipient_id = ? OR author_id = ?) AND photo_key IS NOT NULL
-     UNION ALL SELECT photo_key FROM letters WHERE (recipient_id = ? OR author_id = ?) AND photo_key IS NOT NULL`,
-  ).bind(id, id, id, id, id, id, id).all<{ key: string }>();
+     UNION ALL SELECT photo_key FROM stickies WHERE recipient_id = ? AND photo_key IS NOT NULL
+     UNION ALL SELECT photo_key FROM letters WHERE recipient_id = ? AND photo_key IS NOT NULL`,
+  ).bind(id, id, id, id, id).all<{ key: string }>();
 
   const res = await c.env.DB.prepare("DELETE FROM members WHERE id = ?").bind(id).run();
   if (!res.meta.changes) return c.json({ error: "not found" }, 404);
@@ -1523,10 +1532,10 @@ app.delete("/admin/media/*", requireAdmin, async (c) => {
 
 app.get("/admin/actions", requireAdmin, async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT a.id, a.action, a.target_type, a.target_id, a.detail, a.created_at,
+    `SELECT a.id, a.action, a.target_type, a.target_id, a.detail, a.created_at, a.admin_id,
             m.name AS admin_name
      FROM admin_actions a
-     JOIN members m ON m.id = a.admin_id
+     LEFT JOIN members m ON m.id = a.admin_id
      ORDER BY a.created_at DESC
      LIMIT 200`,
   ).all<Record<string, unknown>>();
@@ -1537,7 +1546,7 @@ app.get("/admin/actions", requireAdmin, async (c) => {
     targetId: r.target_id as string,
     detail: r.detail as string,
     createdAt: r.created_at as number,
-    adminName: r.admin_name as string,
+    adminName: (r.admin_name as string | null) ?? (r.admin_id as string),
   }));
   return c.json({ actions });
 });

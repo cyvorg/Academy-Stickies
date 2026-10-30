@@ -9,8 +9,8 @@
  *   npm run grant-admin:remote -- --email=dev@example.com     # production
  *   npm run grant-admin -- --email=dev@example.com --revoke
  */
-import { randomUUID } from "node:crypto";
-import { d1Query, isRemote, sqlQuote } from "./util";
+import { randomBytes, randomUUID } from "node:crypto";
+import { d1Query, isRemote, loadDevVars, siteUrl, sqlQuote } from "./util";
 import { execFileSync } from "node:child_process";
 
 function arg(name: string): string | undefined {
@@ -43,20 +43,37 @@ function main() {
     return;
   }
 
+  // Granting admin also ROTATES the member's magic-link token: their
+  // pre-existing, possibly emailed or printed, never-expiring link must not
+  // silently become an admin credential. Audit rows are attributed to the
+  // 'dev-script' sentinel (admin_id has no FK by design), never to the
+  // target - the log must not claim members granted themselves admin.
+  const freshToken = randomBytes(24).toString("base64url");
   execFileSync(
     "npx",
     [
       "wrangler", "d1", "execute", "stickies-db",
       remote ? "--remote" : "--local",
       "--command",
-      `UPDATE members SET is_admin = ${flag} WHERE id = ${sqlQuote(member.id)}; ` +
+      `UPDATE members SET is_admin = ${flag}` +
+      (revoke ? "" : `, login_token = '${freshToken}'`) +
+      ` WHERE id = ${sqlQuote(member.id)}; ` +
       `INSERT INTO admin_actions (id, admin_id, action, target_type, target_id, detail, created_at) ` +
-      `VALUES ('${randomUUID()}', ${sqlQuote(member.id)}, '${revoke ? "admin.revoke" : "admin.grant"}', ` +
+      `VALUES ('${randomUUID()}', 'dev-script', '${revoke ? "admin.revoke" : "admin.grant"}', ` +
       `'member', ${sqlQuote(member.id)}, 'via scripts/grant-admin.ts', ${Date.now()});`,
     ],
     { stdio: "inherit" },
   );
   console.log(`${revoke ? "Revoked" : "Granted"} admin for ${member.name} <${email}> (${remote ? "remote" : "local"} D1).`);
+  if (!revoke) {
+    console.log("Their sign-in token was rotated; any old magic link is dead.");
+    if (process.argv.includes("--print-link")) {
+      loadDevVars();
+      console.log(`${siteUrl()}/api/auth?token=${freshToken}`);
+    } else {
+      console.log("Print the fresh link with: npm run login-link" + (remote ? ":remote" : "") + ` -- --email=${email}`);
+    }
+  }
 }
 
 main();
