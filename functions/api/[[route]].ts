@@ -1321,8 +1321,21 @@ app.delete("/admin/members/:id", requireAdmin, async (c) => {
      UNION ALL SELECT photo_key FROM letters WHERE recipient_id = ? AND photo_key IS NOT NULL`,
   ).bind(id, id, id, id, id).all<{ key: string }>();
 
-  const res = await c.env.DB.prepare("DELETE FROM members WHERE id = ?").bind(id).run();
-  if (!res.meta.changes) return c.json({ error: "not found" }, 404);
+  // Delete dependent rows explicitly instead of relying on FK cascades:
+  // the schema declares them, but making the cleanup explicit keeps the
+  // outcome identical in every D1 environment. Authored notes/letters are
+  // NOT touched - they survive with author_id SET NULL via their declared
+  // FK action (or, where unenforced, stay as-is with the same net effect).
+  const res = await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM stickies WHERE recipient_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM letters WHERE recipient_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM feedback WHERE member_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM profiles WHERE member_id = ?").bind(id),
+    c.env.DB.prepare("UPDATE stickies SET author_id = NULL WHERE author_id = ?").bind(id),
+    c.env.DB.prepare("UPDATE letters SET author_id = NULL WHERE author_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM members WHERE id = ?").bind(id),
+  ]);
+  if (!res[res.length - 1].meta.changes) return c.json({ error: "not found" }, 404);
   await logAdminAction(c, "member.delete", "member", id, targetRow.name);
   for (const row of media.results ?? []) {
     c.executionCtx.waitUntil(c.env.MEDIA.delete(row.key).catch(() => {}));

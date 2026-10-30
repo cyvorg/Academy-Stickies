@@ -236,16 +236,18 @@ export function App() {
 
       <AppFooter onSendFeedback={openFeedback} />
 
-      <div class="fab-group">
-        <button class="fab fab--letter" onClick={() => openWriteLetter()} aria-label="Write letter">
-          <span aria-hidden="true" style="font-size: 16px;">✉️</span>
-          Write Letter
-        </button>
-        <button class="fab" onClick={() => openGive()} aria-label="New sticky">
-          <Icon name="plus" size={20} />
-          New Sticky
-        </button>
-      </div>
+      {route.name !== "admin" && (
+        <div class="fab-group">
+          <button class="fab fab--letter" onClick={() => openWriteLetter()} aria-label="Write letter">
+            <span aria-hidden="true" style="font-size: 16px;">✉️</span>
+            Write Letter
+          </button>
+          <button class="fab" onClick={() => openGive()} aria-label="New sticky">
+            <Icon name="plus" size={20} />
+            New Sticky
+          </button>
+        </div>
+      )}
 
       {give.open && (
         <Sheet title="New Sticky" onClose={() => setGive({ open: false })}>
