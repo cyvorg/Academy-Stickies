@@ -12,6 +12,7 @@ import { navigate, useHashRoute } from "./router";
 import { EditProfile } from "./views/EditProfile";
 import { GiveSticky } from "./views/GiveSticky";
 import { Login } from "./views/Login";
+import { Admin } from "./views/Admin";
 import { Mentors } from "./views/Mentors";
 import { Roster } from "./views/Roster";
 import { SendFeedback } from "./views/SendFeedback";
@@ -158,6 +159,7 @@ export function App() {
               onToggleTheme={toggle}
               onLogout={logout}
               unreadCount={me.unreadCount}
+              isAdmin={me.isAdmin}
             />
           }
         />
@@ -176,6 +178,27 @@ export function App() {
           />
         )}
       </>
+    );
+  } else if (route.name === "admin") {
+    content = me.isAdmin ? (
+      <>
+        <Nav
+          title="Academy"
+          subtitle="Admin"
+          right={
+            <HeaderActions
+              theme={theme}
+              onToggleTheme={toggle}
+              onLogout={logout}
+              unreadCount={me.unreadCount}
+              isAdmin={me.isAdmin}
+            />
+          }
+        />
+        <Admin />
+      </>
+    ) : (
+      <Nav title="Academy" subtitle="Not found" />
     );
   } else if (route.name === "edit") {
     content = (

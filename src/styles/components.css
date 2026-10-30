@@ -2776,3 +2776,160 @@
 
 
 
+
+/* ------------------------------------------------------------------ */
+/* Admin dashboard                                                     */
+/* ------------------------------------------------------------------ */
+
+.admin {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 16px 48px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+
+.admin-tab {
+  border: 1px solid var(--line, #ddd);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.admin-tab--active {
+  background: var(--ink, #222);
+  color: var(--surface);
+  border-color: var(--ink, #222);
+}
+
+.admin-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 12px;
+}
+
+.admin-add .field {
+  flex: 1 1 180px;
+}
+
+.admin-check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.admin-link {
+  padding: 12px;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.admin-link code,
+.admin-row__sub code {
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.admin-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid var(--line, #eee);
+}
+
+.admin-row:last-child {
+  border-bottom: none;
+}
+
+.admin-row--hidden {
+  opacity: 0.55;
+}
+
+.admin-row__main {
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-row__title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.admin-row__sub {
+  font-size: 13px;
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+
+.admin-row__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admin-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--ink, #222);
+  color: var(--surface);
+  vertical-align: middle;
+}
+
+.admin-tag--mentor {
+  background: transparent;
+  color: var(--ink, #222);
+  border: 1px solid var(--line, #ccc);
+}
+
+.admin-tag--hidden {
+  background: #a33;
+}
+
+.btn--danger {
+  border-color: #a33;
+  color: #a33;
+}
+
+.btn--armed {
+  background: #a33;
+  color: #fff;
+}
+
+.admin-empty {
+  padding: 24px 12px;
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+@media (max-width: 560px) {
+  .admin-row {
+    flex-direction: column;
+  }
+  .admin-row__actions {
+    justify-content: flex-start;
+  }
+}

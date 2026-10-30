@@ -1,5 +1,11 @@
 import type { ProfileInput } from "../shared/profile";
 import type {
+  AdminAction,
+  AdminFeedbackItem,
+  AdminLetter,
+  AdminMediaItem,
+  AdminMember,
+  AdminSticky,
   CreateStickyResult,
   Me,
   Mentor,
@@ -236,3 +242,54 @@ export async function deleteLetter(id: string): Promise<void> {
   await parse(await fetch(`/api/letters/${id}`, { method: "DELETE" }));
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Admin dashboard (every call 403s unless the session is staff)       */
+/* ------------------------------------------------------------------ */
+
+async function adminSend<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return parse<T>(res);
+}
+
+export const admin = {
+  listMembers: () => adminSend<{ members: AdminMember[] }>("/admin/members", "GET"),
+  addMember: (input: { name: string; email: string; is_mentor?: boolean }) =>
+    adminSend<{ ok: true; id: string; link: string }>("/admin/members", "POST", input),
+  updateMember: (id: string, input: { name?: string; email?: string; is_mentor?: boolean }) =>
+    adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}`, "PATCH", input),
+  resendLink: (id: string) =>
+    adminSend<{ ok: true; emailed: boolean; link?: string }>(
+      `/admin/members/${encodeURIComponent(id)}/resend-link`, "POST"),
+  deleteMember: (id: string) =>
+    adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}?confirm=permanent`, "DELETE"),
+  disableMember: (id: string) =>
+    adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}/disable`, "POST"),
+  enableMember: (id: string) =>
+    adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}/enable`, "POST"),
+  listActions: () => adminSend<{ actions: AdminAction[] }>("/admin/actions", "GET"),
+
+  listStickies: () => adminSend<{ stickies: AdminSticky[] }>("/admin/stickies", "GET"),
+  setStickyHidden: (id: string, hidden: boolean) =>
+    adminSend<{ ok: true }>(`/admin/stickies/${encodeURIComponent(id)}`, "PATCH", { hidden }),
+  deleteSticky: (id: string) =>
+    adminSend<{ ok: true }>(`/admin/stickies/${encodeURIComponent(id)}?confirm=permanent`, "DELETE"),
+
+  listLetters: () => adminSend<{ letters: AdminLetter[] }>("/admin/letters", "GET"),
+  setLetterHidden: (id: string, hidden: boolean) =>
+    adminSend<{ ok: true }>(`/admin/letters/${encodeURIComponent(id)}`, "PATCH", { hidden }),
+  deleteLetter: (id: string) =>
+    adminSend<{ ok: true }>(`/admin/letters/${encodeURIComponent(id)}?confirm=permanent`, "DELETE"),
+
+  listFeedback: () => adminSend<{ feedback: AdminFeedbackItem[] }>("/admin/feedback", "GET"),
+  setFeedbackRead: (id: string, read: boolean) =>
+    adminSend<{ ok: true }>(`/admin/feedback/${encodeURIComponent(id)}`, "PATCH", { read }),
+
+  listMedia: () => adminSend<{ media: AdminMediaItem[] }>("/admin/media", "GET"),
+  deleteMedia: (key: string) =>
+    adminSend<{ ok: true }>(`/admin/media/${key.split("/").map(encodeURIComponent).join("/")}?confirm=permanent`, "DELETE"),
+};

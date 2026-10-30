@@ -42,7 +42,9 @@
     "invite": "tsx scripts/invite.ts",
     "invite:remote": "tsx scripts/invite.ts --remote",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.functions.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "grant-admin": "tsx scripts/grant-admin.ts",
+    "grant-admin:remote": "tsx scripts/grant-admin.ts --remote"
   },
   "dependencies": {
     "hono": "^4.6.14",

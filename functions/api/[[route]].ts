@@ -32,6 +32,11 @@ import {
   STICKY_COLORS,
 } from "../../shared/types";
 import type {
+  AdminFeedbackItem,
+  AdminLetter,
+  AdminMediaItem,
+  AdminMember,
+  AdminSticky,
   Letter,
   LetterStyle,
   Me,
@@ -65,6 +70,8 @@ interface MemberRow {
   avatar_key: string | null;
   login_token: string;
   wall_public: number;
+  is_admin: number;
+  disabled_at: number | null;
   created_at: number;
   last_login_at: number | null;
   notifications_seen_at: number | null; // watermark for the red notification dot
@@ -144,7 +151,7 @@ function parseJson<T>(raw: string | null, fallback: T): T {
 async function unreadCountFor(c: AppContext, m: MemberRow): Promise<number> {
   const row = await c.env.DB.prepare(
     `SELECT COUNT(*) AS n FROM stickies
-     WHERE recipient_id = ? AND created_at > ?`,
+     WHERE recipient_id = ? AND created_at > ? AND hidden_at IS NULL`,
   )
     .bind(m.id, m.notifications_seen_at ?? 0)
     .first<{ n: number }>();
@@ -159,6 +166,7 @@ function toMe(m: MemberRow, unreadCount: number): Me {
     avatarUrl: avatarUrl(m),
     wallPublic: m.wall_public === 1,
     unreadCount,
+    isAdmin: m.is_admin === 1,
   };
 }
 
@@ -205,7 +213,33 @@ async function requireAuth(c: AppContext, next: Next) {
   )
     .bind(memberId)
     .first<MemberRow>();
-  if (!member) return c.json({ error: "unauthorized" }, 401);
+  if (!member || member.disabled_at) return c.json({ error: "unauthorized" }, 401);
+
+  c.set("member", member);
+  c.set("memberId", member.id);
+  await next();
+}
+
+/** requireAuth, plus the staff flag. Every /admin route hangs off this; the
+ *  frontend hides its Admin entry for non-admins too, but this check is the
+ *  one that matters. */
+async function requireAdmin(c: AppContext, next: Next) {
+  const cookie = getCookie(c, COOKIE_NAME);
+  const memberId = cookie
+    ? await verifySession(cookie, c.env.SESSION_SECRET)
+    : null;
+  if (!memberId) return c.json({ error: "unauthorized" }, 401);
+
+  // Same column set as requireAuth — anything PR-branch-only would break here.
+  const member = await c.env.DB.prepare(
+    `SELECT m.*, p.photo_key, p.thumb_key, p.session, p.role
+     FROM members m LEFT JOIN profiles p ON p.member_id = m.id
+     WHERE m.id = ?`,
+  )
+    .bind(memberId)
+    .first<MemberRow>();
+  if (!member || member.disabled_at) return c.json({ error: "unauthorized" }, 401);
+  if (member.is_admin !== 1) return c.json({ error: "admins only" }, 403);
 
   c.set("member", member);
   c.set("memberId", member.id);
@@ -228,6 +262,7 @@ app.get("/auth", async (c) => {
     .bind(token)
     .first<MemberRow>();
   if (!member) return c.redirect(`${origin}/?error=badlink`);
+  if (member.disabled_at) return c.redirect(`${origin}/?error=disabled`);
 
   const session = await createSession(member.id, c.env.SESSION_SECRET);
   setCookie(c, COOKIE_NAME, session.value, {
@@ -491,10 +526,10 @@ app.get("/members", requireSession, async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT m.id, m.name, m.avatar_key, m.wall_public,
             p.photo_key, p.thumb_key, p.session, p.tagline,
-            (SELECT COUNT(*) FROM stickies s WHERE s.recipient_id = m.id) AS received_count
+            (SELECT COUNT(*) FROM stickies s WHERE s.recipient_id = m.id AND s.hidden_at IS NULL) AS received_count
      FROM members m
      LEFT JOIN profiles p ON p.member_id = m.id
-     WHERE COALESCE(p.is_mentor, 0) = 0
+     WHERE COALESCE(p.is_mentor, 0) = 0 AND m.disabled_at IS NULL
      ORDER BY m.name COLLATE NOCASE ASC`,
   ).all<RosterRow>();
 
@@ -511,7 +546,7 @@ app.get("/mentors", requireSession, async (c) => {
             p.slug, p.nickname, p.role, p.skills, p.tagline, p.photo_key, p.thumb_key, p.intro, p.sections, p.links
      FROM members m
      JOIN profiles p ON p.member_id = m.id
-     WHERE p.is_mentor = 1
+     WHERE p.is_mentor = 1 AND m.disabled_at IS NULL
      ORDER BY COALESCE(p.sort_order, 2147483647) ASC, m.name COLLATE NOCASE ASC`,
   ).all<{
     id: string;
@@ -560,7 +595,7 @@ app.get("/members/:id", requireSession, async (c) => {
     c.env.DB.prepare(
       `SELECT m.id, m.name, m.avatar_key, m.wall_public,
               p.photo_key, p.thumb_key, p.session, p.role, p.is_mentor, p.tagline, p.intro, p.sections, p.links,
-              (SELECT COUNT(*) FROM stickies s WHERE s.recipient_id = m.id) AS received_count
+              (SELECT COUNT(*) FROM stickies s WHERE s.recipient_id = m.id AND s.hidden_at IS NULL) AS received_count
        FROM members m
        LEFT JOIN profiles p ON p.member_id = m.id
        WHERE m.id = ?`,
@@ -571,7 +606,7 @@ app.get("/members/:id", requireSession, async (c) => {
               a.name AS author_name
        FROM stickies s
        LEFT JOIN members a ON a.id = s.author_id
-       WHERE s.recipient_id = ?
+       WHERE s.recipient_id = ? AND s.hidden_at IS NULL
        ORDER BY s.created_at DESC`,
     ).bind(id),
     c.env.DB.prepare(
@@ -580,7 +615,7 @@ app.get("/members/:id", requireSession, async (c) => {
               l.anon_name, l.anon_color, a.name AS author_name
        FROM letters l
        LEFT JOIN members a ON a.id = l.author_id
-       WHERE l.recipient_id = ? AND (l.recipient_id = ? OR l.author_id = ?)
+       WHERE l.recipient_id = ? AND l.hidden_at IS NULL AND (l.recipient_id = ? OR l.author_id = ?)
        ORDER BY l.created_at DESC`,
     ).bind(id, meId, meId),
   ]);
@@ -812,6 +847,7 @@ app.delete("/stickies/:id", requireSession, async (c) => {
   }
 
   await c.env.DB.prepare("DELETE FROM stickies WHERE id = ?").bind(id).run();
+  await logAdminAction(c, "sticky.delete", "sticky", id);
   if (sticky.photo_key) {
     c.executionCtx.waitUntil(c.env.MEDIA.delete(sticky.photo_key).catch(() => {}));
   }
@@ -967,6 +1003,7 @@ app.delete("/letters/:id", requireSession, async (c) => {
   }
 
   await c.env.DB.prepare("DELETE FROM letters WHERE id = ?").bind(id).run();
+  await logAdminAction(c, "letter.delete", "letter", id);
   if (letter.photo_key) {
     c.executionCtx.waitUntil(c.env.MEDIA.delete(letter.photo_key).catch(() => {}));
   }
@@ -1026,7 +1063,7 @@ app.get("/media/*", requireSession, async (c) => {
       `SELECT s.author_id, s.recipient_id, m.wall_public
        FROM stickies s
        LEFT JOIN members m ON m.id = s.recipient_id
-       WHERE s.id = ?`,
+       WHERE s.id = ? AND s.hidden_at IS NULL`,
     )
       .bind(stickyId)
       .first<{ author_id: string | null; recipient_id: string; wall_public: number | null }>();
@@ -1039,7 +1076,7 @@ app.get("/media/*", requireSession, async (c) => {
   } else if (key.startsWith("letters/")) {
     const letterId = key.slice("letters/".length);
     const row = await c.env.DB.prepare(
-      `SELECT author_id, recipient_id FROM letters WHERE id = ?`,
+      `SELECT author_id, recipient_id FROM letters WHERE id = ? AND hidden_at IS NULL`,
     )
       .bind(letterId)
       .first<{ author_id: string | null; recipient_id: string }>();
@@ -1069,6 +1106,430 @@ app.get("/media/*", requireSession, async (c) => {
       : "private, max-age=31536000, immutable",
   );
   return new Response(object.body, { headers });
+});
+
+
+async function logAdminAction(
+  c: AppContext,
+  action: string,
+  targetType: string,
+  targetId: string | undefined,
+  detail = "",
+): Promise<void> {
+  await c.env.DB.prepare(
+    "INSERT INTO admin_actions (id, admin_id, action, target_type, target_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).bind(newId(), c.get("memberId"), action, targetType, targetId ?? "", detail, Date.now()).run();
+}
+
+// ---------------------------------------------------------------------------
+// Admin dashboard — every route behind requireAdmin.
+//
+// Moderation is non-destructive by default: hide sets hidden_at/hidden_by and
+// member-facing queries filter it out; restore clears them. Permanent deletion
+// is a separate action that requires the explicit ?confirm=permanent marker.
+// Hiding NEVER touches R2 media or removes database rows, so a restore always
+// brings the content back exactly as it was. Granting the admin flag itself is
+// deliberately NOT here — that is a developer operation (scripts/grant-admin.ts).
+// ---------------------------------------------------------------------------
+
+app.get("/admin/members", requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT m.id, m.name, m.email, m.avatar_key, m.wall_public, m.is_admin, m.disabled_at,
+            m.created_at, m.last_login_at,
+            COALESCE(p.is_mentor, 0) AS is_mentor,
+            (SELECT COUNT(*) FROM stickies s WHERE s.recipient_id = m.id AND s.hidden_at IS NULL) AS received_count
+     FROM members m
+     LEFT JOIN profiles p ON p.member_id = m.id
+     ORDER BY m.name COLLATE NOCASE ASC`,
+  ).all<Record<string, unknown>>();
+
+  const members: AdminMember[] = (rows.results ?? []).map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    email: r.email as string,
+    avatarUrl: avatarUrl(r as { avatar_key: string | null; photo_key?: string | null }),
+    isMentor: (r.is_mentor as number) === 1,
+    isAdmin: (r.is_admin as number) === 1,
+    disabledAt: (r.disabled_at as number | null) ?? null,
+    wallPublic: (r.wall_public as number) === 1,
+    createdAt: r.created_at as number,
+    lastLoginAt: (r.last_login_at as number | null) ?? null,
+    receivedCount: (r.received_count as number) ?? 0,
+  }));
+  return c.json({ members });
+});
+
+app.post("/admin/members", requireAdmin, async (c) => {
+  const body = await c.req
+    .json<{ name?: string; email?: string; is_mentor?: boolean }>()
+    .catch(() => ({} as { name?: string; email?: string; is_mentor?: boolean }));
+  const name = String(body.name ?? "").trim().slice(0, 120);
+  const email = String(body.email ?? "").trim().toLowerCase().slice(0, 200);
+  if (!name || !email || !email.includes("@")) {
+    return c.json({ error: "Name and a valid email are required." }, 400);
+  }
+  const existing = await c.env.DB.prepare(
+    "SELECT id FROM members WHERE lower(email) = ?",
+  ).bind(email).first();
+  if (existing) return c.json({ error: "A member with that email already exists." }, 409);
+
+  const id = newId();
+  const loginToken = randomToken();
+  await c.env.DB.prepare(
+    "INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES (?, ?, ?, ?, 0, 0, ?)",
+  ).bind(id, name, email, loginToken, Date.now()).run();
+
+  if (body.is_mentor) {
+    await c.env.DB.prepare(
+      "INSERT INTO profiles (member_id, is_mentor) VALUES (?, 1) ON CONFLICT(member_id) DO UPDATE SET is_mentor = 1",
+    ).bind(id).run();
+  }
+  await logAdminAction(c, "member.add", "member", id, email);
+  const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
+  // Never put another member's sign-in token on screen in production: when
+  // email is configured the link goes to their inbox only. The link is
+  // returned solely for local development, where Brevo is not configured.
+  if (emailConfigured(c.env)) {
+    await sendMagicLink(c.env, email, name, link);
+    return c.json({ ok: true, id, emailed: true }, 201);
+  }
+  return c.json({ ok: true, id, emailed: false, link }, 201);
+});
+
+app.patch("/admin/members/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const target = await c.env.DB.prepare(
+    "SELECT id FROM members WHERE id = ?",
+  ).bind(id).first();
+  if (!target) return c.json({ error: "not found" }, 404);
+
+  const body = await c.req
+    .json<{ name?: string; email?: string; is_mentor?: boolean }>()
+    .catch(() => ({} as { name?: string; email?: string; is_mentor?: boolean }));
+
+  if (body.name !== undefined) {
+    const name = String(body.name).trim().slice(0, 120);
+    if (!name) return c.json({ error: "Name cannot be empty." }, 400);
+    await c.env.DB.prepare("UPDATE members SET name = ? WHERE id = ?").bind(name, id).run();
+  }
+  if (body.email !== undefined) {
+    const email = String(body.email).trim().toLowerCase().slice(0, 200);
+    if (!email.includes("@")) return c.json({ error: "A valid email is required." }, 400);
+    const dupe = await c.env.DB.prepare(
+      "SELECT id FROM members WHERE lower(email) = ? AND id != ?",
+    ).bind(email, id).first();
+    if (dupe) return c.json({ error: "Another member already uses that email." }, 409);
+    await c.env.DB.prepare("UPDATE members SET email = ? WHERE id = ?").bind(email, id).run();
+  }
+  if (body.is_mentor !== undefined) {
+    await c.env.DB.prepare(
+      "INSERT INTO profiles (member_id, is_mentor) VALUES (?, ?) ON CONFLICT(member_id) DO UPDATE SET is_mentor = excluded.is_mentor",
+    ).bind(id, body.is_mentor ? 1 : 0).run();
+  }
+  await logAdminAction(c, "member.update", "member", id,
+    Object.keys(body).filter((k) => (body as Record<string, unknown>)[k] !== undefined).join(","));
+  return c.json({ ok: true });
+});
+
+// Deactivate is the default way to remove access: login links stop working,
+// existing sessions die on the next requireAuth, and the member vanishes from
+// the roster and mentor directory — but their wall, notes and media all stay
+// intact, so reactivate brings everything back untouched.
+app.post("/admin/members/:id/disable", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  if (id === c.get("memberId")) return c.json({ error: "You cannot deactivate your own account." }, 400);
+  const res = await c.env.DB.prepare(
+    "UPDATE members SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL",
+  ).bind(Date.now(), id).run();
+  if (!res.meta.changes) return c.json({ error: "not found or already deactivated" }, 404);
+  await logAdminAction(c, "member.disable", "member", id);
+  return c.json({ ok: true });
+});
+
+app.post("/admin/members/:id/enable", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const res = await c.env.DB.prepare(
+    "UPDATE members SET disabled_at = NULL WHERE id = ? AND disabled_at IS NOT NULL",
+  ).bind(id).run();
+  if (!res.meta.changes) return c.json({ error: "not found or not deactivated" }, 404);
+  await logAdminAction(c, "member.enable", "member", id);
+  return c.json({ ok: true });
+});
+
+app.post("/admin/members/:id/resend-link", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const member = await c.env.DB.prepare(
+    "SELECT id, name, email FROM members WHERE id = ?",
+  ).bind(id).first<{ id: string; name: string; email: string }>();
+  if (!member) return c.json({ error: "not found" }, 404);
+
+  // Rotate the token on every resend: an old leaked link dies with the new one.
+  const loginToken = randomToken();
+  await c.env.DB.prepare("UPDATE members SET login_token = ? WHERE id = ?")
+    .bind(loginToken, id).run();
+  await logAdminAction(c, "member.resend-link", "member", id);
+  const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
+
+  if (emailConfigured(c.env)) {
+    await sendMagicLink(c.env, member.email, member.name, link);
+    return c.json({ ok: true, emailed: true });
+  }
+  // Local/dev without Brevo: hand the link back so the flow stays testable.
+  return c.json({ ok: true, emailed: false, link });
+});
+
+app.delete("/admin/members/:id", requireAdmin, async (c) => {
+  if (c.req.query("confirm") !== "permanent") {
+    return c.json({ error: "Permanent member deletion requires ?confirm=permanent." }, 400);
+  }
+  const id = c.req.param("id");
+  const meId = c.get("memberId");
+  if (id === meId) return c.json({ error: "You cannot delete your own account." }, 400);
+
+  // An admin's account is removed by revoking the flag (dev script) first —
+  // never by deleting the member row out from under the role.
+  const targetRow = await c.env.DB.prepare(
+    "SELECT is_admin, name FROM members WHERE id = ?",
+  ).bind(id).first<{ is_admin: number; name: string }>();
+  if (!targetRow) return c.json({ error: "not found" }, 404);
+  if (targetRow.is_admin === 1) {
+    return c.json({ error: "Revoke their admin flag (scripts/grant-admin.ts) before deleting." }, 400);
+  }
+
+  const media = await c.env.DB.prepare(
+    `SELECT avatar_key AS key FROM members WHERE id = ? AND avatar_key IS NOT NULL
+     UNION ALL SELECT photo_key FROM profiles WHERE member_id = ? AND photo_key IS NOT NULL
+     UNION ALL SELECT thumb_key FROM profiles WHERE member_id = ? AND thumb_key IS NOT NULL
+     UNION ALL SELECT photo_key FROM stickies WHERE (recipient_id = ? OR author_id = ?) AND photo_key IS NOT NULL
+     UNION ALL SELECT photo_key FROM letters WHERE (recipient_id = ? OR author_id = ?) AND photo_key IS NOT NULL`,
+  ).bind(id, id, id, id, id, id, id).all<{ key: string }>();
+
+  const res = await c.env.DB.prepare("DELETE FROM members WHERE id = ?").bind(id).run();
+  if (!res.meta.changes) return c.json({ error: "not found" }, 404);
+  await logAdminAction(c, "member.delete", "member", id, targetRow.name);
+  for (const row of media.results ?? []) {
+    c.executionCtx.waitUntil(c.env.MEDIA.delete(row.key).catch(() => {}));
+  }
+  return c.json({ ok: true });
+});
+
+app.get("/admin/stickies", requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT s.id, s.recipient_id, r.name AS recipient_name,
+            s.author_id, a.name AS author_name, s.is_anonymous,
+            s.described_as, s.good_at, s.color, s.photo_key, s.created_at,
+            s.hidden_at, hb.name AS hidden_by_name
+     FROM stickies s
+     JOIN members r ON r.id = s.recipient_id
+     LEFT JOIN members a ON a.id = s.author_id
+     LEFT JOIN members hb ON hb.id = s.hidden_by
+     ORDER BY s.created_at DESC
+     LIMIT 500`,
+  ).all<Record<string, unknown>>();
+
+  const stickies: AdminSticky[] = (rows.results ?? []).map((r) => ({
+    id: r.id as string,
+    recipientId: r.recipient_id as string,
+    recipientName: r.recipient_name as string,
+    // An anonymous note's author is never re-identified — not even to admins.
+    authorId: (r.is_anonymous as number) === 1 ? null : ((r.author_id as string | null) ?? null),
+    authorName: (r.is_anonymous as number) === 1 ? null : ((r.author_name as string | null) ?? null),
+    isAnonymous: (r.is_anonymous as number) === 1,
+    describedAs: r.described_as as string,
+    goodAt: r.good_at as string,
+    color: r.color as string,
+    hasPhoto: r.photo_key != null,
+    createdAt: r.created_at as number,
+    hiddenAt: (r.hidden_at as number | null) ?? null,
+    hiddenBy: (r.hidden_by_name as string | null) ?? null,
+  }));
+  return c.json({ stickies });
+});
+
+app.patch("/admin/stickies/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ hidden?: boolean }>().catch(() => ({} as { hidden?: boolean }));
+  if (typeof body.hidden !== "boolean") return c.json({ error: "hidden (boolean) is required." }, 400);
+  const res = body.hidden
+    ? await c.env.DB.prepare("UPDATE stickies SET hidden_at = ?, hidden_by = ? WHERE id = ?")
+        .bind(Date.now(), c.get("memberId"), id).run()
+    : await c.env.DB.prepare("UPDATE stickies SET hidden_at = NULL, hidden_by = NULL WHERE id = ?")
+        .bind(id).run();
+  if (!res.meta.changes) return c.json({ error: "not found" }, 404);
+  await logAdminAction(c, body.hidden ? "sticky.hide" : "sticky.restore", "sticky", id);
+  return c.json({ ok: true });
+});
+
+app.delete("/admin/stickies/:id", requireAdmin, async (c) => {
+  if (c.req.query("confirm") !== "permanent") {
+    return c.json({ error: "Permanent deletion requires ?confirm=permanent. Use hide for reversible moderation." }, 400);
+  }
+  const id = c.req.param("id");
+  const sticky = await c.env.DB.prepare(
+    "SELECT photo_key FROM stickies WHERE id = ?",
+  ).bind(id).first<{ photo_key: string | null }>();
+  if (!sticky) return c.json({ error: "not found" }, 404);
+  await c.env.DB.prepare("DELETE FROM stickies WHERE id = ?").bind(id).run();
+  if (sticky.photo_key) {
+    c.executionCtx.waitUntil(c.env.MEDIA.delete(sticky.photo_key).catch(() => {}));
+  }
+  return c.json({ ok: true });
+});
+
+app.get("/admin/letters", requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT l.id, l.recipient_id, r.name AS recipient_name,
+            l.author_id, a.name AS author_name, l.is_anonymous,
+            l.subject, substr(l.body, 1, 160) AS excerpt, l.is_opened, l.created_at,
+            l.hidden_at, hb.name AS hidden_by_name
+     FROM letters l
+     JOIN members r ON r.id = l.recipient_id
+     LEFT JOIN members a ON a.id = l.author_id
+     LEFT JOIN members hb ON hb.id = l.hidden_by
+     ORDER BY l.created_at DESC
+     LIMIT 500`,
+  ).all<Record<string, unknown>>();
+
+  const letters: AdminLetter[] = (rows.results ?? []).map((r) => ({
+    id: r.id as string,
+    recipientId: r.recipient_id as string,
+    recipientName: r.recipient_name as string,
+    authorId: (r.is_anonymous as number) === 1 ? null : ((r.author_id as string | null) ?? null),
+    authorName: (r.is_anonymous as number) === 1 ? null : ((r.author_name as string | null) ?? null),
+    isAnonymous: (r.is_anonymous as number) === 1,
+    subject: r.subject as string,
+    excerpt: r.excerpt as string,
+    isOpened: (r.is_opened as number) === 1,
+    createdAt: r.created_at as number,
+    hiddenAt: (r.hidden_at as number | null) ?? null,
+    hiddenBy: (r.hidden_by_name as string | null) ?? null,
+  }));
+  return c.json({ letters });
+});
+
+app.patch("/admin/letters/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ hidden?: boolean }>().catch(() => ({} as { hidden?: boolean }));
+  if (typeof body.hidden !== "boolean") return c.json({ error: "hidden (boolean) is required." }, 400);
+  const res = body.hidden
+    ? await c.env.DB.prepare("UPDATE letters SET hidden_at = ?, hidden_by = ? WHERE id = ?")
+        .bind(Date.now(), c.get("memberId"), id).run()
+    : await c.env.DB.prepare("UPDATE letters SET hidden_at = NULL, hidden_by = NULL WHERE id = ?")
+        .bind(id).run();
+  if (!res.meta.changes) return c.json({ error: "not found" }, 404);
+  await logAdminAction(c, body.hidden ? "letter.hide" : "letter.restore", "letter", id);
+  return c.json({ ok: true });
+});
+
+app.delete("/admin/letters/:id", requireAdmin, async (c) => {
+  if (c.req.query("confirm") !== "permanent") {
+    return c.json({ error: "Permanent deletion requires ?confirm=permanent. Use hide for reversible moderation." }, 400);
+  }
+  const id = c.req.param("id");
+  const letter = await c.env.DB.prepare(
+    "SELECT photo_key FROM letters WHERE id = ?",
+  ).bind(id).first<{ photo_key: string | null }>();
+  if (!letter) return c.json({ error: "not found" }, 404);
+  await c.env.DB.prepare("DELETE FROM letters WHERE id = ?").bind(id).run();
+  if (letter.photo_key) {
+    c.executionCtx.waitUntil(c.env.MEDIA.delete(letter.photo_key).catch(() => {}));
+  }
+  return c.json({ ok: true });
+});
+
+app.get("/admin/feedback", requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT f.id, f.member_id, m.name AS member_name, f.message, f.created_at, f.read_at
+     FROM feedback f
+     JOIN members m ON m.id = f.member_id
+     ORDER BY f.created_at DESC
+     LIMIT 500`,
+  ).all<Record<string, unknown>>();
+
+  const feedback: AdminFeedbackItem[] = (rows.results ?? []).map((r) => ({
+    id: r.id as string,
+    memberId: r.member_id as string,
+    memberName: r.member_name as string,
+    message: r.message as string,
+    createdAt: r.created_at as number,
+    readAt: (r.read_at as number | null) ?? null,
+  }));
+  return c.json({ feedback });
+});
+
+app.patch("/admin/feedback/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ read?: boolean }>().catch(() => ({} as { read?: boolean }));
+  if (typeof body.read !== "boolean") return c.json({ error: "read (boolean) is required." }, 400);
+  const res = await c.env.DB.prepare(
+    "UPDATE feedback SET read_at = ? WHERE id = ?",
+  ).bind(body.read ? Date.now() : null, id).run();
+  if (!res.meta.changes) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true });
+});
+
+app.get("/admin/media", requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT avatar_key AS key, 'avatar' AS kind, id AS owner_id, name AS owner_name FROM members WHERE avatar_key IS NOT NULL
+     UNION ALL
+     SELECT p.photo_key, 'profile-photo', m.id, m.name FROM profiles p JOIN members m ON m.id = p.member_id WHERE p.photo_key IS NOT NULL
+     UNION ALL
+     SELECT p.thumb_key, 'profile-thumb', m.id, m.name FROM profiles p JOIN members m ON m.id = p.member_id WHERE p.thumb_key IS NOT NULL
+     UNION ALL
+     SELECT s.photo_key, 'sticky-photo', s.recipient_id, r.name FROM stickies s JOIN members r ON r.id = s.recipient_id WHERE s.photo_key IS NOT NULL
+     UNION ALL
+     SELECT l.photo_key, 'letter-photo', l.recipient_id, r.name FROM letters l JOIN members r ON r.id = l.recipient_id WHERE l.photo_key IS NOT NULL
+     ORDER BY key`,
+  ).all<Record<string, unknown>>();
+
+  const media: AdminMediaItem[] = (rows.results ?? []).map((r) => ({
+    key: r.key as string,
+    kind: r.kind as AdminMediaItem["kind"],
+    ownerId: r.owner_id as string,
+    ownerName: r.owner_name as string,
+  }));
+  return c.json({ media });
+});
+
+// Wildcard: R2 keys contain slashes ("avatars/<id>", "stickies/<id>").
+app.delete("/admin/media/*", requireAdmin, async (c) => {
+  if (c.req.query("confirm") !== "permanent") {
+    return c.json({ error: "Media deletion requires ?confirm=permanent." }, 400);
+  }
+  const key = new URL(c.req.url).pathname.split("/admin/media/")[1] ?? "";
+  if (!key) return c.json({ error: "not found" }, 404);
+  // Clear every DB reference first so nothing dangles, then drop the object.
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE members SET avatar_key = NULL WHERE avatar_key = ?").bind(key),
+    c.env.DB.prepare("UPDATE profiles SET photo_key = NULL WHERE photo_key = ?").bind(key),
+    c.env.DB.prepare("UPDATE profiles SET thumb_key = NULL WHERE thumb_key = ?").bind(key),
+    c.env.DB.prepare("UPDATE stickies SET photo_key = NULL WHERE photo_key = ?").bind(key),
+    c.env.DB.prepare("UPDATE letters SET photo_key = NULL WHERE photo_key = ?").bind(key),
+  ]);
+  await c.env.MEDIA.delete(key).catch(() => {});
+  await logAdminAction(c, "media.delete", "media", key);
+  return c.json({ ok: true });
+});
+
+app.get("/admin/actions", requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT a.id, a.action, a.target_type, a.target_id, a.detail, a.created_at,
+            m.name AS admin_name
+     FROM admin_actions a
+     JOIN members m ON m.id = a.admin_id
+     ORDER BY a.created_at DESC
+     LIMIT 200`,
+  ).all<Record<string, unknown>>();
+  const actions = (rows.results ?? []).map((r) => ({
+    id: r.id as string,
+    action: r.action as string,
+    targetType: r.target_type as string,
+    targetId: r.target_id as string,
+    detail: r.detail as string,
+    createdAt: r.created_at as number,
+    adminName: r.admin_name as string,
+  }));
+  return c.json({ actions });
 });
 
 app.notFound((c) => c.json({ error: "not found" }, 404));

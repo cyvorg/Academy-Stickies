@@ -20,6 +20,9 @@ export interface Me {
   /** Notes received since this member last opened their own wall — drives the
    *  red notification dot. Cleared to 0 by viewing your wall. */
   unreadCount: number;
+  /** Staff flag. The nav shows the Admin entry when set; every /admin route
+   *  re-checks it server-side regardless of what the frontend renders. */
+  isAdmin: boolean;
 }
 
 /** One "## About Me"-style block from a cohort profile. Body is Markdown. */
@@ -138,3 +141,78 @@ export const MAX_FIELD_LEN = 280;
 export const MAX_LETTER_BODY_LEN = 4000;
 export const MAX_LETTER_SUBJECT_LEN = 120;
 
+
+/* ------------------------------------------------------------------ */
+/* Admin dashboard                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface AdminMember {
+  id: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  isMentor: boolean;
+  isAdmin: boolean;
+  disabledAt: number | null;
+  wallPublic: boolean;
+  createdAt: number;
+  lastLoginAt: number | null;
+  receivedCount: number;
+}
+
+export interface AdminSticky {
+  id: string;
+  recipientId: string;
+  recipientName: string;
+  authorId: string | null;
+  authorName: string | null;
+  isAnonymous: boolean;
+  describedAs: string;
+  goodAt: string;
+  color: string;
+  hasPhoto: boolean;
+  createdAt: number;
+  hiddenAt: number | null;
+  hiddenBy: string | null;
+}
+
+export interface AdminLetter {
+  id: string;
+  recipientId: string;
+  recipientName: string;
+  authorId: string | null;
+  authorName: string | null;
+  isAnonymous: boolean;
+  subject: string;
+  excerpt: string;
+  isOpened: boolean;
+  createdAt: number;
+  hiddenAt: number | null;
+  hiddenBy: string | null;
+}
+
+export interface AdminFeedbackItem {
+  id: string;
+  memberId: string;
+  memberName: string;
+  message: string;
+  createdAt: number;
+  readAt: number | null;
+}
+
+export interface AdminMediaItem {
+  key: string;
+  kind: "avatar" | "profile-photo" | "profile-thumb" | "sticky-photo" | "letter-photo";
+  ownerId: string;
+  ownerName: string;
+}
+
+export interface AdminAction {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail: string;
+  createdAt: number;
+  adminName: string;
+}
