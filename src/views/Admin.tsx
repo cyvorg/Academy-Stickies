@@ -6,15 +6,17 @@ import type {
   AdminLetter,
   AdminMediaItem,
   AdminMember,
+  AdminRosterEntry,
   AdminSticky,
 } from "../../shared/types";
 import { Spinner } from "../components/controls";
 import { useToast } from "../toast";
 
-type Tab = "members" | "stickies" | "letters" | "feedback" | "media" | "activity";
+type Tab = "members" | "cohorts" | "stickies" | "letters" | "feedback" | "media" | "activity";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "members", label: "Members" },
+  { id: "cohorts", label: "Cohorts" },
   { id: "stickies", label: "Stickies" },
   { id: "letters", label: "Letters" },
   { id: "feedback", label: "Feedback" },
@@ -360,6 +362,111 @@ function MediaTab() {
   );
 }
 
+function CohortsTab() {
+  const toast = useToast();
+  const [roster, setRoster] = useState<AdminRosterEntry[] | null>(null);
+
+  async function load() {
+    try {
+      setRoster((await admin.listRoster()).roster);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Couldn't load the roster.", "error");
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  if (!roster) return <Spinner />;
+  return (
+    <div>
+      <div class="group__header">
+        Cohort roster · {roster.filter((r) => r.session === "AM").length} AM ·{" "}
+        {roster.filter((r) => r.session === "PM").length} PM ·{" "}
+        {roster.filter((r) => !r.session).length} unassigned
+      </div>
+      <div class="group admin-list">
+        {roster.map((r) => (
+          <RosterRow key={r.id} entry={r} onChanged={load} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RosterRow({ entry, onChanged }: { entry: AdminRosterEntry; onChanged: () => Promise<void> }) {
+  const toast = useToast();
+  const [tagline, setTagline] = useState(entry.tagline ?? "");
+  const [role, setRole] = useState(entry.role ?? "");
+  const [busy, setBusy] = useState(false);
+
+  async function save(patch: { session?: string | null; tagline?: string | null; role?: string | null }) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await admin.updateRoster(entry.id, patch);
+      await onChanged();
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Couldn't update the roster.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="admin-row">
+      <div class="admin-row__main">
+        <div class="admin-row__title">
+          {entry.name}
+          {entry.isMentor && <span class="admin-tag admin-tag--mentor">mentor</span>}
+          {entry.disabledAt && <span class="admin-tag admin-tag--hidden">deactivated</span>}
+          {!entry.hasProfile && <span class="admin-tag admin-tag--hidden">no profile</span>}
+        </div>
+        <div class="admin-row__sub">
+          {entry.slug ?? "no slug"} ·{" "}
+          {entry.hasPhoto ? "photo" : "no photo"}
+          {entry.hasThumb ? " · thumb" : ""}
+        </div>
+        <div class="admin-roster-fields">
+          <input
+            class="field"
+            placeholder="Tagline"
+            value={tagline}
+            maxLength={200}
+            onInput={(e) => setTagline((e.target as HTMLInputElement).value)}
+          />
+          <input
+            class="field"
+            placeholder={entry.isMentor ? "Role (e.g. Design Mentor)" : "Role"}
+            value={role}
+            maxLength={120}
+            onInput={(e) => setRole((e.target as HTMLInputElement).value)}
+          />
+        </div>
+      </div>
+      <div class="admin-row__actions">
+        <div class="admin-session">
+          {(["AM", "PM", null] as const).map((s) => (
+            <button
+              key={s ?? "none"}
+              class={`btn ${entry.session === s ? "btn--filled" : ""}`}
+              disabled={busy}
+              onClick={() => save({ session: s })}
+            >
+              {s ?? "No session"}
+            </button>
+          ))}
+        </div>
+        <button
+          class="btn"
+          disabled={busy || (tagline === (entry.tagline ?? "") && role === (entry.role ?? ""))}
+          onClick={() => save({ tagline: tagline || null, role: role || null })}
+        >
+          Save fields
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ActivityTab() {
   const toast = useToast();
   const [actions, setActions] = useState<AdminAction[] | null>(null);
@@ -406,6 +513,7 @@ export function Admin() {
         ))}
       </div>
       {tab === "members" && <MembersTab />}
+      {tab === "cohorts" && <CohortsTab />}
       {tab === "stickies" && <StickiesTab />}
       {tab === "letters" && <LettersTab />}
       {tab === "feedback" && <FeedbackTab />}

@@ -1,6 +1,7 @@
 import type { ProfileInput } from "../shared/profile";
 import type {
   AdminAction,
+  AdminRosterEntry,
   AdminFeedbackItem,
   AdminLetter,
   AdminMediaItem,
@@ -272,6 +273,9 @@ export const admin = {
   enableMember: (id: string) =>
     adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}/enable`, "POST"),
   listActions: () => adminSend<{ actions: AdminAction[] }>("/admin/actions", "GET"),
+  listRoster: () => adminSend<{ roster: AdminRosterEntry[] }>("/admin/roster", "GET"),
+  updateRoster: (id: string, input: { session?: string | null; tagline?: string | null; role?: string | null }) =>
+    adminSend<{ ok: true }>(`/admin/roster/${encodeURIComponent(id)}`, "PATCH", input),
 
   listStickies: () => adminSend<{ stickies: AdminSticky[] }>("/admin/stickies", "GET"),
   setStickyHidden: (id: string, hidden: boolean) =>

@@ -216,3 +216,18 @@ export interface AdminAction {
   createdAt: number;
   adminName: string;
 }
+
+export interface AdminRosterEntry {
+  id: string;
+  name: string;
+  email: string;
+  isMentor: boolean;
+  disabledAt: number | null;
+  hasProfile: boolean;
+  slug: string | null;
+  session: string | null;
+  tagline: string | null;
+  role: string | null;
+  hasPhoto: boolean;
+  hasThumb: boolean;
+}

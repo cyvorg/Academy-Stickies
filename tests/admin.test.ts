@@ -265,3 +265,74 @@ describe("access gates (standing requirements)", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("cohorts: roster management routes", () => {
+  it("gates: 401 unauthenticated, 403 non-admin", async () => {
+    expect((await call("/admin/roster")).status).toBe(401);
+    expect((await call("/admin/roster", { cookie: await cookieFor("m-lena") })).status).toBe(403);
+    expect((await call("/admin/roster/m-lena", { method: "PATCH", cookie: await cookieFor("m-lena"), body: { session: "AM" } })).status).toBe(403);
+  });
+
+  it("PATCH session upserts a profile with slug + updated_at (NOT NULL lesson)", async () => {
+    const res = await call("/admin/roster/m-lena", {
+      method: "PATCH",
+      cookie: await cookieFor("m-admin"),
+      body: { session: "AM" },
+    });
+    expect(res.status).toBe(200);
+    const p = await DB.prepare("SELECT slug, session, updated_at FROM profiles WHERE member_id = 'm-lena'").first();
+    expect(p.session).toBe("AM");
+    expect(p.slug).toBeTruthy();
+    expect(p.updated_at).toBeGreaterThan(0);
+  });
+
+  it("rejects an invalid session value", async () => {
+    const res = await call("/admin/roster/m-lena", {
+      method: "PATCH",
+      cookie: await cookieFor("m-admin"),
+      body: { session: "NOON" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("updates tagline/role without touching other fields, and audits the write", async () => {
+    const res = await call("/admin/roster/m-lena", {
+      method: "PATCH",
+      cookie: await cookieFor("m-admin"),
+      body: { tagline: "Fixture tagline", role: "Fixture role" },
+    });
+    expect(res.status).toBe(200);
+    const p = await DB.prepare("SELECT session, tagline, role FROM profiles WHERE member_id = 'm-lena'").first();
+    expect(p.session).toBe("AM"); // unchanged by a tagline/role write
+    expect(p.tagline).toBe("Fixture tagline");
+    expect(p.role).toBe("Fixture role");
+    const audit = await DB.prepare(
+      "SELECT a.action, a.detail, m.name AS admin_name FROM admin_actions a LEFT JOIN members m ON m.id = a.admin_id WHERE a.action = 'profile.update' AND a.target_id = 'm-lena' ORDER BY a.created_at DESC",
+    ).first();
+    expect(audit).not.toBeNull();
+    expect(audit.detail).toBe("tagline,role");
+    expect(audit.admin_name).toBe("Ada Admin");
+  });
+
+  it("roster list exposes no login_token and reports profile/photo state", async () => {
+    const res = await call("/admin/roster", { cookie: await cookieFor("m-admin") });
+    expect(res.status).toBe(200);
+    expect(res.text).not.toContain("tok-");
+    const lena = res.json.roster.find((r: any) => r.id === "m-lena");
+    expect(lena.hasProfile).toBe(true);
+    expect(lena.session).toBe("AM");
+  });
+
+  it("disabled members stay manageable in roster writes (admin operation)", async () => {
+    await DB.exec("UPDATE members SET disabled_at = 1790000000000 WHERE id = 'm-lena'");
+    const res = await call("/admin/roster/m-lena", {
+      method: "PATCH",
+      cookie: await cookieFor("m-admin"),
+      body: { session: "PM" },
+    });
+    expect(res.status).toBe(200);
+    await DB.exec("UPDATE members SET disabled_at = NULL WHERE id = 'm-lena'");
+    const p = await DB.prepare("SELECT session FROM profiles WHERE member_id = 'm-lena'").first();
+    expect(p.session).toBe("PM");
+  });
+});

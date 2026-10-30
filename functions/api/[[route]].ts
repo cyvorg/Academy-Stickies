@@ -32,6 +32,7 @@ import {
   STICKY_COLORS,
 } from "../../shared/types";
 import type {
+  AdminRosterEntry,
   AdminFeedbackItem,
   AdminLetter,
   AdminMediaItem,
@@ -1540,6 +1541,100 @@ app.delete("/admin/media/*", requireAdmin, async (c) => {
   ]);
   await c.env.MEDIA.delete(key).catch(() => {});
   await logAdminAction(c, "media.delete", "media", key);
+  return c.json({ ok: true });
+});
+
+
+// ---------------------------------------------------------------------------
+// Admin: cohort roster management (the app has a single cohort: the imported
+// class roster in profiles, filtered by AM/PM session). Fields managed here
+// are the ones the CLI cohort import owns day-to-day: session, tagline, role.
+// ---------------------------------------------------------------------------
+
+app.get("/admin/roster", requireAdmin, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT m.id, m.name, m.email, m.disabled_at,
+            COALESCE(p.is_mentor, 0) AS is_mentor,
+            p.member_id AS profile_id, p.slug, p.session, p.tagline, p.role,
+            p.photo_key, p.thumb_key
+     FROM members m
+     LEFT JOIN profiles p ON p.member_id = m.id
+     ORDER BY COALESCE(p.is_mentor, 0) DESC, m.name COLLATE NOCASE`,
+  ).all<Record<string, unknown>>();
+
+  const roster: AdminRosterEntry[] = (rows.results ?? []).map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    email: r.email as string,
+    isMentor: (r.is_mentor as number) === 1,
+    disabledAt: (r.disabled_at as number | null) ?? null,
+    hasProfile: r.profile_id != null,
+    slug: (r.slug as string | null) ?? null,
+    session: (r.session as string | null) ?? null,
+    tagline: (r.tagline as string | null) ?? null,
+    role: (r.role as string | null) ?? null,
+    hasPhoto: r.photo_key != null,
+    hasThumb: r.thumb_key != null,
+  }));
+  return c.json({ roster });
+});
+
+app.patch("/admin/roster/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const target = await c.env.DB.prepare(
+    "SELECT id, name FROM members WHERE id = ?",
+  ).bind(id).first<{ id: string; name: string }>();
+  if (!target) return c.json({ error: "not found" }, 404);
+
+  const body = await c.req
+    .json<{ session?: string | null; tagline?: string | null; role?: string | null }>()
+    .catch(() => ({} as { session?: string | null; tagline?: string | null; role?: string | null }));
+
+  // Explicit field whitelist: only session/tagline/role are writable here.
+  const session =
+    body.session === undefined ? undefined
+    : body.session === null || body.session === "" ? null
+    : body.session === "AM" || body.session === "PM" ? body.session
+    : undefined;
+  if (body.session !== undefined && session === undefined && body.session !== null && body.session !== "") {
+    return c.json({ error: "session must be AM, PM, or empty." }, 400);
+  }
+  const tagline = body.tagline === undefined || body.tagline === null
+    ? body.tagline === null ? null : undefined
+    : String(body.tagline).trim().slice(0, 200);
+  const role = body.role === undefined || body.role === null
+    ? body.role === null ? null : undefined
+    : String(body.role).trim().slice(0, 120);
+
+  const changed: string[] = [];
+  if (session !== undefined) changed.push("session");
+  if (tagline !== undefined) changed.push("tagline");
+  if (role !== undefined) changed.push("role");
+  if (!changed.length) return c.json({ error: "Nothing to update." }, 400);
+
+  // Upsert: profiles.slug and updated_at are NOT NULL (0002), so an insert
+  // must supply both - same constraint the review caught on mentor creation.
+  await c.env.DB.prepare(
+    `INSERT INTO profiles (member_id, slug, session, tagline, role, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(member_id) DO UPDATE SET
+       session = CASE WHEN ? THEN excluded.session ELSE profiles.session END,
+       tagline = CASE WHEN ? THEN excluded.tagline ELSE profiles.tagline END,
+       role = CASE WHEN ? THEN excluded.role ELSE profiles.role END,
+       updated_at = excluded.updated_at`,
+  ).bind(
+    id,
+    slugFromName(target.name),
+    session ?? null,
+    tagline ?? null,
+    role ?? null,
+    Date.now(),
+    session !== undefined ? 1 : 0,
+    tagline !== undefined ? 1 : 0,
+    role !== undefined ? 1 : 0,
+  ).run();
+
+  await logAdminAction(c, "profile.update", "member", id, changed.join(","));
   return c.json({ ok: true });
 });
 
