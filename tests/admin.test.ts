@@ -495,3 +495,107 @@ describe("admin review hardening round 2", () => {
     expect(Number(audit.n)).toBe(0);
   });
 });
+
+describe("admin member PATCH atomicity (adapter-injected failure)", () => {
+  function wrapDb(db: any, opts: { failBatch?: boolean; mutatingRuns?: string[] }) {
+    const wrapStmt = (stmt: any, sql: string): any =>
+      new Proxy(stmt, {
+        get(t, prop) {
+          if (prop === "bind") return (...args: any[]) => wrapStmt(t.bind(...args), sql);
+          if (prop === "run")
+            return async () => {
+              if (/^\s*(UPDATE|INSERT|DELETE)/i.test(sql)) opts.mutatingRuns?.push(sql);
+              return t.run();
+            };
+          const v = (t as any)[prop];
+          return typeof v === "function" ? v.bind(t) : v;
+        },
+      });
+    return new Proxy(db, {
+      get(t, prop) {
+        if (prop === "batch" && opts.failBatch)
+          return async () => {
+            throw new Error("injected batch failure");
+          };
+        if (prop === "prepare") return (sql: string) => wrapStmt(t.prepare(sql), sql);
+        const v = (t as any)[prop];
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+  }
+
+  it("a failing batch leaves the row and the audit log untouched", async () => {
+    await DB.exec(
+      "INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES ('m-hb', 'Harden Batch', 'hb@fixture.test', 'tok-hb', 1, 0, 1700000004004);",
+    );
+    const admin = await cookieFor("m-admin");
+    const realDB = env.DB;
+    env.DB = wrapDb(realDB, { failBatch: true });
+    try {
+      const res = await call("/admin/members/m-hb", {
+        method: "PATCH",
+        cookie: admin,
+        body: { name: "Should Not Persist" },
+      });
+      expect(res.status).not.toBe(200);
+    } finally {
+      env.DB = realDB;
+    }
+    const row = await DB.prepare("SELECT name FROM members WHERE id = 'm-hb'").first();
+    expect(row.name).toBe("Harden Batch");
+    const audit = await DB.prepare(
+      "SELECT COUNT(*) AS n FROM admin_actions WHERE action = 'member.update' AND target_id = 'm-hb'",
+    ).first();
+    expect(Number(audit.n)).toBe(0);
+  });
+
+  it("the success path runs no mutating statement outside the batch", async () => {
+    const admin = await cookieFor("m-admin");
+    const realDB = env.DB;
+    const mutatingRuns: string[] = [];
+    env.DB = wrapDb(realDB, { mutatingRuns });
+    try {
+      const res = await call("/admin/members/m-hb", {
+        method: "PATCH",
+        cookie: admin,
+        body: { name: "Batch Committed", is_mentor: true },
+      });
+      expect(res.status).toBe(200);
+      expect(mutatingRuns).toEqual([]);
+    } finally {
+      env.DB = realDB;
+    }
+    const row = await DB.prepare("SELECT name FROM members WHERE id = 'm-hb'").first();
+    expect(row.name).toBe("Batch Committed");
+    const audit = await DB.prepare(
+      "SELECT COUNT(*) AS n FROM admin_actions WHERE action = 'member.update' AND target_id = 'm-hb'",
+    ).first();
+    expect(Number(audit.n)).toBe(1);
+  });
+});
+
+describe("native D1 batch rollback (engine-level, no proxy)", () => {
+  it("a failing inner statement rolls back the whole batch on the real local D1", async () => {
+    await DB.exec(
+      "INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES ('m-hr', 'Harden Rollback', 'hr@fixture.test', 'tok-hr', 1, 0, 1700000004005);",
+    );
+    // No proxy: the statements go to the real local D1. The second one
+    // violates NOT NULL on admin_actions.action.
+    let threw = false;
+    try {
+      await DB.batch([
+        DB.prepare("UPDATE members SET name = ? WHERE id = ?").bind("Rolled Back Name", "m-hr"),
+        DB.prepare(
+          "INSERT INTO admin_actions (id, admin_id, action, target_type, target_id, detail, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)",
+        ).bind("rb-1", "m-admin", "member", "m-hr", "", Date.now()),
+      ]);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    const row = await DB.prepare("SELECT name FROM members WHERE id = 'm-hr'").first();
+    expect(row.name).toBe("Harden Rollback"); // first statement did not persist
+    const audit = await DB.prepare("SELECT COUNT(*) AS n FROM admin_actions WHERE id = 'rb-1'").first();
+    expect(Number(audit.n)).toBe(0);
+  });
+});
