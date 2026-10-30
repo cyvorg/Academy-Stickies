@@ -26,6 +26,21 @@ export function loadDevVars(): void {
   }
 }
 
+/** Site origin for REMOTE sign-in links: never falls back to localhost,
+ * because a localhost URL carrying a production token is a broken, confusing
+ * link. Requires --site=... or SITE_URL and exits otherwise. */
+export function remoteSiteUrl(): string {
+  const arg = process.argv.find((a) => a.startsWith("--site="));
+  const url = (arg ? arg.slice("--site=".length) : process.env.SITE_URL) ?? "";
+  if (!url) {
+    console.error(
+      "Refusing to print a remote sign-in link without an explicit site: pass --site=https://<project>.pages.dev or set SITE_URL.",
+    );
+    process.exit(1);
+  }
+  return url.replace(/\/$/, "");
+}
+
 export function siteUrl(): string {
   const arg = process.argv.find((a) => a.startsWith("--site="));
   if (arg) return arg.slice("--site=".length).replace(/\/$/, "");

@@ -10,7 +10,7 @@
  *   npm run grant-admin -- --email=dev@example.com --revoke
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { d1Query, isRemote, loadDevVars, siteUrl, sqlQuote } from "./util";
+import { d1Query, isRemote, loadDevVars, remoteSiteUrl, siteUrl, sqlQuote } from "./util";
 import { execFileSync } from "node:child_process";
 
 function arg(name: string): string | undefined {
@@ -27,13 +27,21 @@ function main() {
   }
 
   const remote = isRemote();
-  const rows = d1Query<{ id: string; name: string; is_admin: number }>(
-    `SELECT id, name, is_admin FROM members WHERE lower(email) = ${sqlQuote(email)}`,
+  const rows = d1Query<{ id: string; name: string; is_admin: number; disabled_at: number | null }>(
+    `SELECT id, name, is_admin, disabled_at FROM members WHERE lower(email) = ${sqlQuote(email)}`,
     remote,
   );
   const member = rows[0];
   if (!member) {
     console.error(`No member with email ${email}. Add them first (seed or the admin dashboard).`);
+    process.exit(1);
+  }
+
+  if (!revoke && member.disabled_at) {
+    // Granting a deactivated member would take effect silently on re-enable:
+    // enable only clears disabled_at, so the member would become an active
+    // admin without a grant at that point.
+    console.error(`${member.name} <${email}> is deactivated. Reactivate them first, then grant admin.`);
     process.exit(1);
   }
 
@@ -69,7 +77,7 @@ function main() {
     console.log("Their sign-in token was rotated; any old magic link is dead.");
     if (process.argv.includes("--print-link")) {
       loadDevVars();
-      console.log(`${siteUrl()}/api/auth?token=${freshToken}`);
+      console.log(`${remote ? remoteSiteUrl() : siteUrl()}/api/auth?token=${freshToken}`);
     } else {
       console.log("Print the fresh link with: npm run login-link" + (remote ? ":remote" : "") + ` -- --email=${email}`);
     }

@@ -412,3 +412,55 @@ describe("admin stats endpoint", () => {
     await call("/admin/stickies/s-stat-a", { method: "PATCH", cookie: admin, body: { hidden: false } });
   });
 });
+
+describe("admin review hardening (PR5 CodeRabbit findings)", () => {
+  it("member PATCH validates everything before any write", async () => {
+    await DB.exec(
+      "INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES ('m-hx', 'Harden X', 'hx@fixture.test', 'tok-hx', 1, 0, 1700000004000), ('m-hy', 'Harden Y', 'hy@fixture.test', 'tok-hy', 1, 0, 1700000004001);",
+    );
+    const admin = await cookieFor("m-admin");
+    const res = await call("/admin/members/m-hx", {
+      method: "PATCH",
+      cookie: admin,
+      body: { name: "Renamed X", email: "hy@fixture.test" },
+    });
+    expect(res.status).toBe(409);
+    const row = await DB.prepare("SELECT name FROM members WHERE id = 'm-hx'").first();
+    expect(row.name).toBe("Harden X"); // no partial write
+    const audit = await DB.prepare(
+      "SELECT COUNT(*) AS n FROM admin_actions WHERE action = 'member.update' AND target_id = 'm-hx'",
+    ).first();
+    expect(Number(audit.n)).toBe(0); // no audit row for a rejected update
+  });
+
+  it("refuses to deactivate an admin account", async () => {
+    await DB.exec(
+      "INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES ('m-hadm', 'Harden Admin', 'hadm@fixture.test', 'tok-hadm', 1, 1, 1700000004002);",
+    );
+    const admin = await cookieFor("m-admin");
+    const res = await call("/admin/members/m-hadm/disable", { method: "POST", cookie: admin });
+    expect(res.status).toBe(400);
+    const row = await DB.prepare("SELECT disabled_at FROM members WHERE id = 'm-hadm'").first();
+    expect(row.disabled_at).toBeNull();
+  });
+
+  it("member add still succeeds with emailed:false when the send fails", async () => {
+    const admin = await cookieFor("m-admin");
+    env.BREVO_API_KEY = "bad-key";
+    env.EMAIL_FROM = "academy@fixture.test";
+    try {
+      const res = await call("/admin/members", {
+        method: "POST",
+        cookie: admin,
+        body: { name: "Harden Mail", email: "hmail@fixture.test" },
+      });
+      expect(res.status).toBe(201);
+      expect(res.json.emailed).toBe(false);
+      const row = await DB.prepare("SELECT id FROM members WHERE email = 'hmail@fixture.test'").first();
+      expect(row).toBeTruthy();
+    } finally {
+      delete env.BREVO_API_KEY;
+      delete env.EMAIL_FROM;
+    }
+  });
+});

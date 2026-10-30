@@ -1247,8 +1247,16 @@ app.post("/admin/members", requireAdmin, async (c) => {
   // from D1 with scripts/get-login-link.ts.
   if (emailConfigured(c.env)) {
     const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
-    await sendMagicLink(c.env, email, name, link);
-    return c.json({ ok: true, id, emailed: true }, 201);
+    try {
+      await sendMagicLink(c.env, email, name, link);
+      return c.json({ ok: true, id, emailed: true }, 201);
+    } catch (err) {
+      // The member and audit row already exist: report success with
+      // emailed:false so the admin uses "Resend link" instead of retrying
+      // the add and hitting a confusing 409.
+      console.error("sendMagicLink failed after member.add", err);
+      return c.json({ ok: true, id, emailed: false }, 201);
+    }
   }
   return c.json({ ok: true, id, emailed: false }, 201);
 });
@@ -1264,22 +1272,26 @@ app.patch("/admin/members/:id", requireAdmin, async (c) => {
     .json<{ name?: string; email?: string; is_mentor?: boolean }>()
     .catch(() => ({} as { name?: string; email?: string; is_mentor?: boolean }));
 
-  if (body.name !== undefined) {
-    const name = String(body.name).trim().slice(0, 120);
-    if (!name) return c.json({ error: "Name cannot be empty." }, 400);
-    await c.env.DB.prepare("UPDATE members SET name = ? WHERE id = ?").bind(name, id).run();
-  }
-  if (body.email !== undefined) {
-    const email = String(body.email).trim().toLowerCase().slice(0, 200);
+  // Validate every field before the first write: a rejected update must
+  // leave the row untouched and write no audit entry.
+  const name = body.name === undefined ? undefined : String(body.name).trim().slice(0, 120);
+  if (name !== undefined && !name) return c.json({ error: "Name cannot be empty." }, 400);
+  const email = body.email === undefined ? undefined : String(body.email).trim().toLowerCase().slice(0, 200);
+  if (email !== undefined) {
     if (!email.includes("@")) return c.json({ error: "A valid email is required." }, 400);
     const dupe = await c.env.DB.prepare(
       "SELECT id FROM members WHERE lower(email) = ? AND id != ?",
     ).bind(email, id).first();
     if (dupe) return c.json({ error: "Another member already uses that email." }, 409);
+  }
+  if (name !== undefined) {
+    await c.env.DB.prepare("UPDATE members SET name = ? WHERE id = ?").bind(name, id).run();
+  }
+  if (email !== undefined) {
     await c.env.DB.prepare("UPDATE members SET email = ? WHERE id = ?").bind(email, id).run();
   }
   if (body.is_mentor !== undefined) {
-    const slugName = body.name ? String(body.name) : target.name;
+    const slugName = name ?? target.name;
     await c.env.DB.prepare(
       "INSERT INTO profiles (member_id, slug, is_mentor, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET is_mentor = excluded.is_mentor",
     ).bind(id, slugFromName(slugName), body.is_mentor ? 1 : 0, Date.now()).run();
@@ -1296,6 +1308,14 @@ app.patch("/admin/members/:id", requireAdmin, async (c) => {
 app.post("/admin/members/:id/disable", requireAdmin, async (c) => {
   const id = c.req.param("id");
   if (id === c.get("memberId")) return c.json({ error: "You cannot deactivate your own account." }, 400);
+  const target = await c.env.DB.prepare(
+    "SELECT is_admin FROM members WHERE id = ?",
+  ).bind(id).first<{ is_admin: number }>();
+  // Same guard as the delete route: admin revocation stays on the
+  // scripts/grant-admin.ts path, so one admin cannot lock out another.
+  if (target?.is_admin) {
+    return c.json({ error: "Admin accounts are managed with scripts/grant-admin.ts, not the dashboard." }, 400);
+  }
   const res = await c.env.DB.prepare(
     "UPDATE members SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL",
   ).bind(Date.now(), id).run();

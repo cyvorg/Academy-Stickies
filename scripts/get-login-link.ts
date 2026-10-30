@@ -9,7 +9,7 @@
  *   npm run login-link -- --email=dev@example.com            # local D1
  *   npm run login-link:remote -- --email=dev@example.com     # production
  */
-import { d1Query, isRemote, loadDevVars, siteUrl, sqlQuote } from "./util";
+import { d1Query, isRemote, loadDevVars, remoteSiteUrl, siteUrl, sqlQuote } from "./util";
 
 function arg(name: string): string | undefined {
   const a = process.argv.find((x) => x.startsWith(`--${name}=`));
@@ -25,6 +25,9 @@ function main() {
 
   loadDevVars();
   const remote = isRemote();
+  // Resolve the link origin first: for remote links this fails fast without
+  // an explicit site, before any database access happens.
+  const origin = remote ? remoteSiteUrl() : siteUrl();
   const rows = d1Query<{ name: string; login_token: string; disabled_at: number | null }>(
     `SELECT name, login_token, disabled_at FROM members WHERE lower(email) = ${sqlQuote(email)}`,
     remote,
@@ -39,7 +42,7 @@ function main() {
     process.exit(1);
   }
 
-  console.log(`${siteUrl()}/api/auth?token=${member.login_token}`);
+  console.log(`${origin}/api/auth?token=${member.login_token}`);
 }
 
 main();
