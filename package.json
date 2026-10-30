@@ -44,7 +44,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.functions.json --noEmit && tsc -p tsconfig.scripts.json --noEmit",
     "test": "vitest run",
     "grant-admin": "tsx scripts/grant-admin.ts",
-    "grant-admin:remote": "tsx scripts/grant-admin.ts --remote"
+    "grant-admin:remote": "tsx scripts/grant-admin.ts --remote",
+    "login-link": "tsx scripts/get-login-link.ts",
+    "login-link:remote": "tsx scripts/get-login-link.ts --remote"
   },
   "dependencies": {
     "hono": "^4.6.14",

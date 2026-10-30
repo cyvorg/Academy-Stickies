@@ -77,7 +77,7 @@ function MembersTab() {
   const [email, setEmail] = useState("");
   const [isMentor, setIsMentor] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [newLink, setNewLink] = useState<string | null>(null);
+  const [emailed, setEmailed] = useState<boolean | null>(null);
 
   async function load() {
     try {
@@ -93,9 +93,9 @@ function MembersTab() {
     setBusy(true);
     try {
       const res = await admin.addMember({ name: name.trim(), email: email.trim(), is_mentor: isMentor });
-      setNewLink(res.link);
+      setEmailed(res.emailed);
       setName(""); setEmail(""); setIsMentor(false);
-      toast("Member added.");
+      toast(res.emailed ? "Member added, sign-in email sent." : "Member added.");
       await load();
     } catch (err) {
       toast(err instanceof ApiError ? err.message : "Couldn't add member.", "error");
@@ -122,10 +122,10 @@ function MembersTab() {
           Add member
         </button>
       </div>
-      {newLink && (
+      {emailed === false && (
         <div class="group admin-link">
-          Sign-in link for the new member (share it with them directly):
-          <code>{newLink}</code>
+          Email is not configured, so no sign-in email was sent. A dev can print the
+          member's sign-in link with <code>npm run login-link -- --email=&lt;email&gt;</code>.
         </div>
       )}
 
@@ -141,7 +141,6 @@ function MembersTab() {
 
 function MemberRow({ member, onChanged }: { member: AdminMember; onChanged: () => Promise<void> }) {
   const toast = useToast();
-  const [link, setLink] = useState<string | null>(null);
 
   async function toggleMentor() {
     try {
@@ -156,8 +155,8 @@ function MemberRow({ member, onChanged }: { member: AdminMember; onChanged: () =
       const res = await admin.resendLink(member.id);
       if (res.emailed) {
         toast("Sign-in email sent.");
-      } else if (res.link) {
-        setLink(res.link);
+      } else {
+        toast("No email configured - a dev can print the link with npm run login-link.", "info");
       }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Couldn't resend link.", "error");
@@ -177,7 +176,6 @@ function MemberRow({ member, onChanged }: { member: AdminMember; onChanged: () =
           {member.email} · {member.receivedCount} note{member.receivedCount === 1 ? "" : "s"}
           {member.lastLoginAt ? ` · last sign-in ${fmt(member.lastLoginAt)}` : " · never signed in"}
         </div>
-        {link && <div class="admin-row__sub"><code>{link}</code></div>}
       </div>
       <div class="admin-row__actions">
         <button class="btn" onClick={toggleMentor}>

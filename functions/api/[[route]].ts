@@ -1193,15 +1193,15 @@ app.post("/admin/members", requireAdmin, async (c) => {
     ).bind(id).run();
   }
   await logAdminAction(c, "member.add", "member", id, email);
-  const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
-  // Never put another member's sign-in token on screen in production: when
-  // email is configured the link goes to their inbox only. The link is
-  // returned solely for local development, where Brevo is not configured.
+  // Another member's sign-in token never leaves the server in an API
+  // response: it goes to their inbox, or (dev without Brevo) a dev pulls it
+  // from D1 with scripts/get-login-link.ts.
   if (emailConfigured(c.env)) {
+    const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
     await sendMagicLink(c.env, email, name, link);
     return c.json({ ok: true, id, emailed: true }, 201);
   }
-  return c.json({ ok: true, id, emailed: false, link }, 201);
+  return c.json({ ok: true, id, emailed: false }, 201);
 });
 
 app.patch("/admin/members/:id", requireAdmin, async (c) => {
@@ -1276,14 +1276,14 @@ app.post("/admin/members/:id/resend-link", requireAdmin, async (c) => {
   await c.env.DB.prepare("UPDATE members SET login_token = ? WHERE id = ?")
     .bind(loginToken, id).run();
   await logAdminAction(c, "member.resend-link", "member", id);
-  const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
-
   if (emailConfigured(c.env)) {
+    const link = `${siteOrigin(c)}/api/auth?token=${loginToken}`;
     await sendMagicLink(c.env, member.email, member.name, link);
     return c.json({ ok: true, emailed: true });
   }
-  // Local/dev without Brevo: hand the link back so the flow stays testable.
-  return c.json({ ok: true, emailed: false, link });
+  // No email configured (local dev): the token stays in D1, never in a
+  // response. scripts/get-login-link.ts prints the link instead.
+  return c.json({ ok: true, emailed: false });
 });
 
 app.delete("/admin/members/:id", requireAdmin, async (c) => {

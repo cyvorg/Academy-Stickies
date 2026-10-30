@@ -259,11 +259,11 @@ async function adminSend<T>(path: string, method: string, body?: unknown): Promi
 export const admin = {
   listMembers: () => adminSend<{ members: AdminMember[] }>("/admin/members", "GET"),
   addMember: (input: { name: string; email: string; is_mentor?: boolean }) =>
-    adminSend<{ ok: true; id: string; link: string }>("/admin/members", "POST", input),
+    adminSend<{ ok: true; id: string; emailed: boolean }>("/admin/members", "POST", input),
   updateMember: (id: string, input: { name?: string; email?: string; is_mentor?: boolean }) =>
     adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}`, "PATCH", input),
   resendLink: (id: string) =>
-    adminSend<{ ok: true; emailed: boolean; link?: string }>(
+    adminSend<{ ok: true; emailed: boolean }>(
       `/admin/members/${encodeURIComponent(id)}/resend-link`, "POST"),
   deleteMember: (id: string) =>
     adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}?confirm=permanent`, "DELETE"),
