@@ -474,3 +474,24 @@ describe("admin review hardening (PR5 CodeRabbit findings)", () => {
     }
   });
 });
+
+describe("admin review hardening round 2", () => {
+  it("member PATCH rejects a non-string name instead of storing \"null\"", async () => {
+    await DB.exec(
+      "INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES ('m-hn', 'Harden Null', 'hn@fixture.test', 'tok-hn', 1, 0, 1700000004003);",
+    );
+    const admin = await cookieFor("m-admin");
+    const res = await call("/admin/members/m-hn", {
+      method: "PATCH",
+      cookie: admin,
+      body: { name: null },
+    });
+    expect(res.status).toBe(400);
+    const row = await DB.prepare("SELECT name FROM members WHERE id = 'm-hn'").first();
+    expect(row.name).toBe("Harden Null");
+    const audit = await DB.prepare(
+      "SELECT COUNT(*) AS n FROM admin_actions WHERE action = 'member.update' AND target_id = 'm-hn'",
+    ).first();
+    expect(Number(audit.n)).toBe(0);
+  });
+});

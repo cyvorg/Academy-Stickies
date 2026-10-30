@@ -38,6 +38,12 @@ export function remoteSiteUrl(): string {
     );
     process.exit(1);
   }
+  if (!url.startsWith("https://")) {
+    // The link carries a login token in its query string: plain http would
+    // expose it in transit.
+    console.error("Refusing a non-https origin for a remote sign-in link.");
+    process.exit(1);
+  }
   return url.replace(/\/$/, "");
 }
 

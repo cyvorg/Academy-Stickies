@@ -51,6 +51,17 @@ function main() {
     return;
   }
 
+  const printLink = !revoke && process.argv.includes("--print-link");
+  // Resolve the link origin BEFORE the database change: without an explicit
+  // remote site this exits here with the member untouched, so a retry with
+  // --site can still grant and print. (After a grant the retry would stop at
+  // "already an admin" and never print the link.)
+  let origin: string | null = null;
+  if (printLink) {
+    loadDevVars();
+    origin = remote ? remoteSiteUrl() : siteUrl();
+  }
+
   // Granting admin also ROTATES the member's magic-link token: their
   // pre-existing, possibly emailed or printed, never-expiring link must not
   // silently become an admin credential. Audit rows are attributed to the
@@ -75,9 +86,8 @@ function main() {
   console.log(`${revoke ? "Revoked" : "Granted"} admin for ${member.name} <${email}> (${remote ? "remote" : "local"} D1).`);
   if (!revoke) {
     console.log("Their sign-in token was rotated; any old magic link is dead.");
-    if (process.argv.includes("--print-link")) {
-      loadDevVars();
-      console.log(`${remote ? remoteSiteUrl() : siteUrl()}/api/auth?token=${freshToken}`);
+    if (printLink) {
+      console.log(`${origin}/api/auth?token=${freshToken}`);
     } else {
       console.log("Print the fresh link with: npm run login-link" + (remote ? ":remote" : "") + ` -- --email=${email}`);
     }

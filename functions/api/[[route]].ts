@@ -1274,9 +1274,15 @@ app.patch("/admin/members/:id", requireAdmin, async (c) => {
 
   // Validate every field before the first write: a rejected update must
   // leave the row untouched and write no audit entry.
-  const name = body.name === undefined ? undefined : String(body.name).trim().slice(0, 120);
+  if (body.name !== undefined && typeof body.name !== "string") {
+    return c.json({ error: "Name must be a string." }, 400);
+  }
+  if (body.email !== undefined && typeof body.email !== "string") {
+    return c.json({ error: "Email must be a string." }, 400);
+  }
+  const name = body.name === undefined ? undefined : (body.name as string).trim().slice(0, 120);
   if (name !== undefined && !name) return c.json({ error: "Name cannot be empty." }, 400);
-  const email = body.email === undefined ? undefined : String(body.email).trim().toLowerCase().slice(0, 200);
+  const email = body.email === undefined ? undefined : (body.email as string).trim().toLowerCase().slice(0, 200);
   if (email !== undefined) {
     if (!email.includes("@")) return c.json({ error: "A valid email is required." }, 400);
     const dupe = await c.env.DB.prepare(
@@ -1284,20 +1290,28 @@ app.patch("/admin/members/:id", requireAdmin, async (c) => {
     ).bind(email, id).first();
     if (dupe) return c.json({ error: "Another member already uses that email." }, 409);
   }
-  if (name !== undefined) {
-    await c.env.DB.prepare("UPDATE members SET name = ? WHERE id = ?").bind(name, id).run();
-  }
-  if (email !== undefined) {
-    await c.env.DB.prepare("UPDATE members SET email = ? WHERE id = ?").bind(email, id).run();
-  }
-  if (body.is_mentor !== undefined) {
-    const slugName = name ?? target.name;
-    await c.env.DB.prepare(
-      "INSERT INTO profiles (member_id, slug, is_mentor, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET is_mentor = excluded.is_mentor",
-    ).bind(id, slugFromName(slugName), body.is_mentor ? 1 : 0, Date.now()).run();
-  }
-  await logAdminAction(c, "member.update", "member", id,
-    Object.keys(body).filter((k) => (body as Record<string, unknown>)[k] !== undefined).join(","));
+  const slugName = name ?? target.name;
+  const detail = Object.keys(body)
+    .filter((k) => (body as Record<string, unknown>)[k] !== undefined)
+    .join(",");
+  // Member changes and their audit entry commit in one batch: a failure
+  // anywhere leaves the row and the log untouched together.
+  await c.env.DB.batch([
+    ...(name !== undefined
+      ? [c.env.DB.prepare("UPDATE members SET name = ? WHERE id = ?").bind(name, id)]
+      : []),
+    ...(email !== undefined
+      ? [c.env.DB.prepare("UPDATE members SET email = ? WHERE id = ?").bind(email, id)]
+      : []),
+    ...(body.is_mentor !== undefined
+      ? [c.env.DB.prepare(
+          "INSERT INTO profiles (member_id, slug, is_mentor, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET is_mentor = excluded.is_mentor",
+        ).bind(id, slugFromName(slugName), body.is_mentor ? 1 : 0, Date.now())]
+      : []),
+    c.env.DB.prepare(
+      "INSERT INTO admin_actions (id, admin_id, action, target_type, target_id, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).bind(newId(), c.get("memberId"), "member.update", "member", id, detail, Date.now()),
+  ]);
   return c.json({ ok: true });
 });
 
