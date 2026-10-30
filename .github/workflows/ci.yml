@@ -12,6 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # PR-controlled commands (npm ci runs install scripts) execute after
+          # checkout: do not leave the workflow token in the git config.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
