@@ -193,6 +193,14 @@ async function requireSession(c: AppContext, next: Next) {
     : null;
   if (!memberId) return c.json({ error: "unauthorized" }, 401);
 
+  // Disabled members keep no session access at all (one indexed read).
+  const row = await c.env.DB.prepare(
+    "SELECT disabled_at FROM members WHERE id = ?",
+  )
+    .bind(memberId)
+    .first<{ disabled_at: number | null }>();
+  if (!row || row.disabled_at) return c.json({ error: "unauthorized" }, 401);
+
   c.set("memberId", memberId);
   await next();
 }
@@ -1370,6 +1378,7 @@ app.delete("/admin/stickies/:id", requireAdmin, async (c) => {
   ).bind(id).first<{ photo_key: string | null }>();
   if (!sticky) return c.json({ error: "not found" }, 404);
   await c.env.DB.prepare("DELETE FROM stickies WHERE id = ?").bind(id).run();
+  await logAdminAction(c, "sticky.delete", "sticky", id);
   if (sticky.photo_key) {
     c.executionCtx.waitUntil(c.env.MEDIA.delete(sticky.photo_key).catch(() => {}));
   }
@@ -1431,6 +1440,7 @@ app.delete("/admin/letters/:id", requireAdmin, async (c) => {
   ).bind(id).first<{ photo_key: string | null }>();
   if (!letter) return c.json({ error: "not found" }, 404);
   await c.env.DB.prepare("DELETE FROM letters WHERE id = ?").bind(id).run();
+  await logAdminAction(c, "letter.delete", "letter", id);
   if (letter.photo_key) {
     c.executionCtx.waitUntil(c.env.MEDIA.delete(letter.photo_key).catch(() => {}));
   }

@@ -24,7 +24,7 @@ ALTER TABLE members ADD COLUMN disabled_at INTEGER;
 -- Who-did-what for staff actions (moderation, destructive, member admin).
 CREATE TABLE IF NOT EXISTS admin_actions (
   id          TEXT PRIMARY KEY,
-  admin_id    TEXT NOT NULL REFERENCES members(id),
+  admin_id    TEXT NOT NULL, -- no FK: audit rows must survive member deletion
   action      TEXT NOT NULL,
   target_type TEXT NOT NULL,
   target_id   TEXT NOT NULL,
