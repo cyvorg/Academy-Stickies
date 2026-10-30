@@ -2909,9 +2909,25 @@
   background: #a33;
 }
 
-.btn--danger {
+.admin .btn--danger {
   border-color: #a33;
   color: #a33;
+}
+
+/* Dark scheme: follow the design system's dark danger token (#ff6b6b,
+   4.9:1+ on the dark cards) instead of the light-only #a33 (2.1:1).
+   The 14% tint is dropped so text contrast is measured against the card. */
+:root[data-theme="dark"] .admin .btn--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .admin .btn--danger {
+    border-color: var(--danger);
+    color: var(--danger);
+    background: transparent;
+  }
 }
 
 .btn--armed {
