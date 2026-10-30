@@ -1,6 +1,7 @@
 import type { ProfileInput } from "../shared/profile";
 import type {
   AdminAction,
+  AdminStats,
   AdminRosterEntry,
   AdminFeedbackItem,
   AdminLetter,
@@ -272,6 +273,7 @@ export const admin = {
     adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}/disable`, "POST"),
   enableMember: (id: string) =>
     adminSend<{ ok: true }>(`/admin/members/${encodeURIComponent(id)}/enable`, "POST"),
+  stats: () => adminSend<{ stats: AdminStats }>("/admin/stats", "GET"),
   listActions: () => adminSend<{ actions: AdminAction[] }>("/admin/actions", "GET"),
   listRoster: () => adminSend<{ roster: AdminRosterEntry[] }>("/admin/roster", "GET"),
   updateRoster: (id: string, input: { session?: string | null; tagline?: string | null; role?: string | null }) =>

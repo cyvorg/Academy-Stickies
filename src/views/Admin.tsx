@@ -6,15 +6,17 @@ import type {
   AdminLetter,
   AdminMediaItem,
   AdminMember,
+  AdminStats,
   AdminRosterEntry,
   AdminSticky,
 } from "../../shared/types";
 import { Spinner } from "../components/controls";
 import { useToast } from "../toast";
 
-type Tab = "members" | "cohorts" | "stickies" | "letters" | "feedback" | "media" | "activity";
+type Tab = "stats" | "members" | "cohorts" | "stickies" | "letters" | "feedback" | "media" | "activity";
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: "stats", label: "Stats" },
   { id: "members", label: "Members" },
   { id: "cohorts", label: "Cohorts" },
   { id: "stickies", label: "Stickies" },
@@ -69,6 +71,42 @@ function ConfirmButton({
     <button class="btn btn--danger btn--armed" disabled={busy} onClick={fire}>
       {busy ? <Spinner /> : confirmLabel}
     </button>
+  );
+}
+
+function StatsTab() {
+  const toast = useToast();
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  useEffect(() => {
+    admin.stats()
+      .then((r) => setStats(r.stats))
+      .catch((err) => toast(err instanceof Error ? err.message : "Couldn't load stats.", "error"));
+  }, []);
+  if (!stats) return <Spinner />;
+  const cards: { label: string; value: number; sub?: string }[] = [
+    { label: "Members", value: stats.members.total, sub: `${stats.members.active} active, ${stats.members.deactivated} deactivated` },
+    { label: "Joined this week", value: stats.members.joinedLast7d, sub: "new accounts, last 7 days" },
+    { label: "Profiles", value: stats.roster.profiles, sub: `${stats.roster.mentors} mentors, ${stats.roster.learners} learners` },
+    { label: "Sessions", value: stats.roster.sessionAm + stats.roster.sessionPm, sub: `${stats.roster.sessionAm} AM, ${stats.roster.sessionPm} PM` },
+    { label: "Stickies", value: stats.stickies.visible, sub: `${stats.stickies.hidden} hidden of ${stats.stickies.total}` },
+    { label: "Written this week", value: stats.stickies.last7d, sub: "stickies, last 7 days" },
+    { label: "Letters", value: stats.letters.visible, sub: `${stats.letters.hidden} hidden of ${stats.letters.total}` },
+    { label: "Unread feedback", value: stats.feedback.unread, sub: `${stats.feedback.total} total` },
+    { label: "Media files", value: stats.media.total, sub: "avatars, photos, thumbs" },
+  ];
+  return (
+    <div>
+      <div class="group__header">Academy at a glance</div>
+      <div class="stat-grid">
+        {cards.map((c) => (
+          <div class="stat-card" key={c.label}>
+            <div class="stat-card__value">{c.value}</div>
+            <div class="stat-card__label">{c.label}</div>
+            {c.sub && <div class="stat-card__sub">{c.sub}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -501,7 +539,7 @@ function ActivityTab() {
 }
 
 export function Admin() {
-  const [tab, setTab] = useState<Tab>("members");
+  const [tab, setTab] = useState<Tab>("stats");
   return (
     <div class="admin">
       <div class="admin-tabs" role="tablist">
@@ -513,6 +551,7 @@ export function Admin() {
           </button>
         ))}
       </div>
+      {tab === "stats" && <StatsTab />}
       {tab === "members" && <MembersTab />}
       {tab === "cohorts" && <CohortsTab />}
       {tab === "stickies" && <StickiesTab />}

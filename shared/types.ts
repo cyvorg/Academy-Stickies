@@ -207,6 +207,15 @@ export interface AdminMediaItem {
   ownerName: string;
 }
 
+export interface AdminStats {
+  members: { total: number; active: number; deactivated: number; admins: number; joinedLast7d: number };
+  roster: { profiles: number; mentors: number; learners: number; sessionAm: number; sessionPm: number };
+  stickies: { total: number; hidden: number; visible: number; last7d: number };
+  letters: { total: number; hidden: number; visible: number };
+  feedback: { total: number; read: number; unread: number };
+  media: { total: number };
+}
+
 export interface AdminAction {
   id: string;
   action: string;

@@ -33,6 +33,7 @@ import {
 } from "../../shared/types";
 import type {
   AdminRosterEntry,
+  AdminStats,
   AdminFeedbackItem,
   AdminLetter,
   AdminMediaItem,
@@ -1138,6 +1139,55 @@ async function logAdminAction(
 // brings the content back exactly as it was. Granting the admin flag itself is
 // deliberately NOT here — that is a developer operation (scripts/grant-admin.ts).
 // ---------------------------------------------------------------------------
+
+app.get("/admin/stats", requireAdmin, async (c) => {
+  const week = 7 * 24 * 60 * 60 * 1000;
+  const since = Date.now() - week;
+  const one = async (sql: string, ...bind: unknown[]) => {
+    const row = await c.env.DB.prepare(sql).bind(...bind).first<{ n: number }>();
+    return row?.n ?? 0;
+  };
+  // COUNT-only, read-only; no member-identifying data leaves this endpoint.
+  const [
+    mTotal, mDeactivated, mAdmins, mJoined7,
+    pProfiles, pMentors, pAm, pPm,
+    sTotal, sHidden, sLast7,
+    lTotal, lHidden,
+    fTotal, fRead,
+    mediaTotal,
+  ] = await Promise.all([
+    one("SELECT COUNT(*) AS n FROM members"),
+    one("SELECT COUNT(*) AS n FROM members WHERE disabled_at IS NOT NULL"),
+    one("SELECT COUNT(*) AS n FROM members WHERE is_admin = 1"),
+    one("SELECT COUNT(*) AS n FROM members WHERE created_at >= ?", since),
+    one("SELECT COUNT(*) AS n FROM profiles"),
+    one("SELECT COUNT(*) AS n FROM profiles WHERE is_mentor = 1"),
+    one("SELECT COUNT(*) AS n FROM profiles WHERE session = 'AM'"),
+    one("SELECT COUNT(*) AS n FROM profiles WHERE session = 'PM'"),
+    one("SELECT COUNT(*) AS n FROM stickies"),
+    one("SELECT COUNT(*) AS n FROM stickies WHERE hidden_at IS NOT NULL"),
+    one("SELECT COUNT(*) AS n FROM stickies WHERE created_at >= ?", since),
+    one("SELECT COUNT(*) AS n FROM letters"),
+    one("SELECT COUNT(*) AS n FROM letters WHERE hidden_at IS NOT NULL"),
+    one("SELECT COUNT(*) AS n FROM feedback"),
+    one("SELECT COUNT(*) AS n FROM feedback WHERE read_at IS NOT NULL"),
+    one(`SELECT COUNT(*) AS n FROM (
+          SELECT avatar_key AS key FROM members WHERE avatar_key IS NOT NULL
+          UNION ALL SELECT photo_key FROM profiles WHERE photo_key IS NOT NULL
+          UNION ALL SELECT thumb_key FROM profiles WHERE thumb_key IS NOT NULL
+          UNION ALL SELECT photo_key FROM stickies WHERE photo_key IS NOT NULL
+          UNION ALL SELECT photo_key FROM letters WHERE photo_key IS NOT NULL)`),
+  ]);
+  const stats: AdminStats = {
+    members: { total: mTotal, active: mTotal - mDeactivated, deactivated: mDeactivated, admins: mAdmins, joinedLast7d: mJoined7 },
+    roster: { profiles: pProfiles, mentors: pMentors, learners: pProfiles - pMentors, sessionAm: pAm, sessionPm: pPm },
+    stickies: { total: sTotal, hidden: sHidden, visible: sTotal - sHidden, last7d: sLast7 },
+    letters: { total: lTotal, hidden: lHidden, visible: lTotal - lHidden },
+    feedback: { total: fTotal, read: fRead, unread: fTotal - fRead },
+    media: { total: mediaTotal },
+  };
+  return c.json({ stats });
+});
 
 app.get("/admin/members", requireAdmin, async (c) => {
   const rows = await c.env.DB.prepare(

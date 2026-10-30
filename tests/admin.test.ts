@@ -362,3 +362,53 @@ describe("roster durability vs CLI cohort import", () => {
     expect(importWouldSkip).toBeNull();
   });
 });
+
+describe("admin stats endpoint", () => {
+  beforeAll(async () => {
+    // Own fixtures: other describes hide/delete the shared seed stickies.
+    const seed = `
+      INSERT INTO members (id, name, email, login_token, wall_public, is_admin, created_at) VALUES
+        ('m-stat', 'Stat Subject', 'stat@fixture.test', 'tok-stat', 1, 0, ${Date.now()});
+      INSERT INTO stickies (id, recipient_id, author_id, is_anonymous, described_as, good_at, color, created_at) VALUES
+        ('s-stat-a', 'm-stat', 'm-lena', 0, 'stats fixture a', '', 'green', ${Date.now()}),
+        ('s-stat-b', 'm-stat', NULL, 1, 'stats fixture b', '', 'yellow', ${Date.now()});
+    `.replace(/\n/g, " ");
+    for (const stmt of seed.split(";").map((x) => x.trim()).filter(Boolean)) {
+      await DB.exec(`${stmt};`);
+    }
+  });
+
+  it("rejects non-admins", async () => {
+    const noCookie = await call("/admin/stats");
+    expect([401, 403]).toContain(noCookie.status);
+    const learner = await call("/admin/stats", { cookie: await cookieFor("m-lena") });
+    expect([401, 403]).toContain(learner.status);
+  });
+
+  it("returns grounded counts for an admin", async () => {
+    const res = await call("/admin/stats", { cookie: await cookieFor("m-admin") });
+    expect(res.status).toBe(200);
+    const s = res.json.stats;
+    // Seed: 3 members (1 admin, none disabled) + this suite's own fixture.
+    expect(s.members.total).toBeGreaterThanOrEqual(4);
+    expect(s.members.admins).toBeGreaterThanOrEqual(1);
+    expect(s.members.joinedLast7d).toBeGreaterThanOrEqual(1); // m-stat is new
+    expect(s.members.active).toBe(s.members.total - s.members.deactivated);
+    expect(s.stickies.total).toBeGreaterThanOrEqual(2);
+    expect(s.stickies.last7d).toBeGreaterThanOrEqual(2); // s-stat-a/b are new
+    expect(s.stickies.visible).toBe(s.stickies.total - s.stickies.hidden);
+    expect(s.feedback.unread).toBe(s.feedback.total - s.feedback.read);
+    expect(typeof s.media.total).toBe("number");
+  });
+
+  it("hide/deactivate move the counts without deleting rows", async () => {
+    const admin = await cookieFor("m-admin");
+    const before = (await call("/admin/stats", { cookie: admin })).json.stats;
+    await call("/admin/stickies/s-stat-a", { method: "PATCH", cookie: admin, body: { hidden: true } });
+    const mid = (await call("/admin/stats", { cookie: admin })).json.stats;
+    expect(mid.stickies.hidden).toBe(before.stickies.hidden + 1);
+    expect(mid.stickies.visible).toBe(before.stickies.visible - 1);
+    expect(mid.stickies.total).toBe(before.stickies.total); // hide never deletes
+    await call("/admin/stickies/s-stat-a", { method: "PATCH", cookie: admin, body: { hidden: false } });
+  });
+});

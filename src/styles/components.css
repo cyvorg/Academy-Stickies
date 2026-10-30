@@ -2787,6 +2787,23 @@
   padding: 0 16px 48px;
 }
 
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s5);
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-wobbly-2);
+  box-shadow: var(--shadow-sm);
+  padding: var(--s4);
+}
+.stat-card__value { font-size: 1.9rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
+.stat-card__label { font-weight: 700; margin-top: var(--s1); }
+.stat-card__sub { color: var(--muted); font-size: 0.85rem; margin-top: 2px; }
+
 .admin-tabs {
   display: flex;
   gap: 8px;
