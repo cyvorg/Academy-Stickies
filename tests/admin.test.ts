@@ -61,7 +61,7 @@ beforeAll(async () => {
   const bindings = await mf.getBindings<{ DB: any }>();
   DB = bindings.DB;
 
-  // Production setup on main: schema.sql (0001 folded) + 0002..0010 + 0012.
+  // Combined production schema: admin and merged learner-map migrations.
   const files = [
     "schema.sql",
     "migrations/0002_cohort_profiles.sql",
@@ -73,6 +73,7 @@ beforeAll(async () => {
     "migrations/0008_mentors_are_members.sql",
     "migrations/0009_note_notifications.sql",
     "migrations/0010_letters.sql",
+    "migrations/0011_learner_locations.sql",
     "migrations/0012_admin.sql",
   ];
   for (const f of files) {
@@ -618,5 +619,18 @@ describe("native D1 batch rollback (engine-level, no proxy)", () => {
     expect(row.name).toBe("Harden Rollback"); // first statement did not persist
     const audit = await DB.prepare("SELECT COUNT(*) AS n FROM admin_actions WHERE id = 'rb-1'").first();
     expect(Number(audit.n)).toBe(0);
+  });
+});
+
+
+describe("merged admin and learner-map identity", () => {
+  it("returns both admin privilege and the member location from /me", async () => {
+    await DB.prepare(
+      "UPDATE profiles SET city=?, country=?, lat=?, lon=?, city_id=?, location_source=?, location_updated_at=? WHERE member_id=?",
+    ).bind("Kuta", "Indonesia", -8.72332, 115.17234, 1639002, "member", 1000, "m-admin").run();
+    const res = await call("/me", { cookie: await cookieFor("m-admin") });
+    expect(res.status).toBe(200);
+    expect(res.json.isAdmin).toBe(true);
+    expect(res.json.location.cityId).toBe(1639002);
   });
 });

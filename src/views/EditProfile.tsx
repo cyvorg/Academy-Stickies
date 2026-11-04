@@ -9,6 +9,7 @@ import { ProfileBody } from "../components/ProfileBody";
 import { Spinner } from "../components/controls";
 import { navigate } from "../router";
 import { useToast } from "../toast";
+import { LocationEditor } from "./LocationEditor";
 
 /** Sections and links carry a client-only key so Preact tracks the right row
  *  across reorder and delete; index keys would swap contents under the reader. */
@@ -228,6 +229,9 @@ export function EditProfile({
             <p class="editor__hint">
               Markdown works: **bold**, *italics*, links, and - lists.
             </p>
+
+            <div class="group__header">Your city on the map</div>
+            <LocationEditor me={me} onMeChange={onMeChange} />
 
             <div class="group__header editor__group-head">
               <span>Sections</span>

@@ -23,6 +23,8 @@ import {
   validateImage,
 } from "../../lib/media";
 import { pseudonymFor } from "../../lib/pseudonym";
+import { cityById } from "../../shared/cities";
+import type { LocationSource, MapPin, MemberLocation } from "../../shared/location";
 import { sanitizeProfileInput } from "../../shared/profile";
 import {
   LETTER_STYLES,
@@ -81,6 +83,14 @@ interface MemberRow {
   thumb_key: string | null;
   session: string | null; // joined from profiles — AM/PM (learners)
   role: string | null; // joined from profiles — "Tech Mentor" etc. (mentors)
+  city: string | null; // joined from profiles — self-reported city-level pin
+  country: string | null;
+  lat: number | null;
+  lon: number | null;
+  city_id: number | null;
+  location_updated_at: number | null;
+  location_source: string | null;
+  location_hidden: number;
 }
 
 type Variables = { member: MemberRow; memberId: string };
@@ -169,6 +179,22 @@ function toMe(m: MemberRow, unreadCount: number): Me {
     wallPublic: m.wall_public === 1,
     unreadCount,
     isAdmin: m.is_admin === 1,
+    location: memberLocation(m),
+  };
+}
+
+/** The member's own pin as only they see it — hidden flag included. */
+function memberLocation(m: MemberRow): MemberLocation | null {
+  if (!m.city || m.lat === null || m.lon === null || m.city_id === null) {
+    return null;
+  }
+  return {
+    cityId: m.city_id,
+    city: m.city,
+    country: m.country ?? "",
+    updatedAt: Math.floor((m.location_updated_at ?? 0) / 1000),
+    source: (m.location_source === "admin" ? "admin" : "member") as LocationSource,
+    hidden: m.location_hidden === 1,
   };
 }
 
@@ -217,7 +243,9 @@ async function requireAuth(c: AppContext, next: Next) {
   if (!memberId) return c.json({ error: "unauthorized" }, 401);
 
   const member = await c.env.DB.prepare(
-    `SELECT m.*, p.photo_key, p.thumb_key, p.session, p.role
+    `SELECT m.*, p.photo_key, p.thumb_key, p.session, p.role,
+            p.city, p.country, p.lat, p.lon, p.city_id,
+            p.location_updated_at, p.location_source, p.location_hidden
      FROM members m LEFT JOIN profiles p ON p.member_id = m.id
      WHERE m.id = ?`,
   )
@@ -455,6 +483,140 @@ app.put("/me/profile", requireAuth, async (c) => {
     links,
   };
   return c.json({ me, profile });
+});
+
+
+// A member pins themselves to a city from the bundled dataset — never raw
+// coordinates, so no precise location can be stored even if a client sends it.
+// The server re-resolves the id against the dataset and is the authority on
+// what lands in D1. Saving a city never changes the hide-from-map opt-out.
+app.put("/me/location", requireAuth, async (c) => {
+  const member = c.get("member");
+  const body = await c.req.json().catch(() => ({}));
+  const cityId = Number((body as { cityId?: unknown }).cityId);
+  if (!Number.isInteger(cityId)) {
+    return c.json({ error: "cityId required" }, 400);
+  }
+  const city = cityById(cityId);
+  if (!city) return c.json({ error: "unknown city" }, 400);
+
+  // Upsert: seeded members can exist without a profile row (profiles is
+  // LEFT JOINed in requireAuth), and an UPDATE-only write silently dropped
+  // their saved city. The slug placeholder is the member id - profile-less
+  // members have no roster card, so it is never rendered.
+  await c.env.DB.prepare(
+    `INSERT INTO profiles
+       (member_id, slug, city, country, lat, lon, city_id, location_updated_at, location_source, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'member', ?)
+     ON CONFLICT(member_id) DO UPDATE SET
+       city = excluded.city, country = excluded.country, lat = excluded.lat,
+       lon = excluded.lon, city_id = excluded.city_id,
+       location_updated_at = excluded.location_updated_at,
+       location_source = 'member'`,
+  )
+    .bind(member.id, member.id, city.name, city.country, city.lat, city.lon, city.id, Date.now(), Date.now())
+    .run();
+
+  return c.json(await meWithUnread(c, { ...member, city: city.name, country: city.country, lat: city.lat, lon: city.lon, city_id: city.id, location_updated_at: Date.now(), location_source: "member" } as MemberRow));
+});
+
+// Remove the pin entirely. The geo fields clear, but location_source stays
+// 'member': the removal IS the member's location choice, and the admin
+// initializer (ADMIN_PIN_FILTER_SQL) only touches rows with no choice at all,
+// so a rerun can never re-pin someone who took their pin down. The hide flag
+// stays as the member left it, so re-adding a city later doesn't surprise
+// them by showing it again.
+app.delete("/me/location", requireAuth, async (c) => {
+  const member = c.get("member");
+  const now = Date.now();
+  // Upsert: the removal tombstone (location_source='member', no city) must
+  // persist even for a member without a profile row, or a later admin
+  // initializer rerun could pin someone who took their pin down.
+  await c.env.DB.prepare(
+    `INSERT INTO profiles
+       (member_id, slug, city, country, lat, lon, city_id, location_updated_at, location_source, updated_at)
+     VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, ?, 'member', ?)
+     ON CONFLICT(member_id) DO UPDATE SET
+       city = NULL, country = NULL, lat = NULL, lon = NULL, city_id = NULL,
+       location_updated_at = excluded.location_updated_at,
+       location_source = 'member'`,
+  )
+    .bind(member.id, member.id, now, now)
+    .run();
+  return c.json(await meWithUnread(c, { ...member, city: null, country: null, lat: null, lon: null, city_id: null, location_updated_at: now, location_source: "member" } as MemberRow));
+});
+
+// The opt-out: hidden pins never leave this query or the map endpoint. A
+// hidden member keeps their saved city — only its visibility changes.
+app.put("/me/location-visibility", requireAuth, async (c) => {
+  const member = c.get("member");
+  // Strict body: a malformed or missing payload must never WRITE - the old
+  // catch-all read it as hidden=false and silently re-exposed a hidden city.
+  const body = await c.req.json().catch(() => null);
+  const hiddenRaw = (body as { hidden?: unknown } | null)?.hidden;
+  if (typeof hiddenRaw !== "boolean") {
+    return c.json({ error: "hidden must be a boolean" }, 400);
+  }
+  const hidden = hiddenRaw;
+  await c.env.DB.prepare(
+    `INSERT INTO profiles (member_id, slug, location_hidden, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(member_id) DO UPDATE SET
+       location_hidden = excluded.location_hidden`,
+  )
+    .bind(member.id, member.id, hidden ? 1 : 0, Date.now())
+    .run();
+  return c.json(
+    await meWithUnread(c, { ...member, location_hidden: hidden ? 1 : 0 } as MemberRow),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Map
+// ---------------------------------------------------------------------------
+
+interface MapRow {
+  id: string;
+  name: string;
+  avatar_key: string | null;
+  photo_key: string | null;
+  thumb_key: string | null;
+  is_mentor: number;
+  city: string;
+  country: string;
+  lat: number;
+  lon: number;
+  location_updated_at: number;
+  location_source: string;
+}
+
+// Every member who has a pin and hasn't hidden it. Mentors are members too
+// (0008), so they appear here with isMentor set; hidden rows are filtered in
+// SQL so they never reach the client at all.
+app.get("/map/members", requireSession, async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT m.id, m.name, m.avatar_key, p.photo_key, p.thumb_key, p.is_mentor,
+            p.city, p.country, p.lat, p.lon,
+            p.location_updated_at, p.location_source
+     FROM members m
+     JOIN profiles p ON p.member_id = m.id
+     WHERE p.city IS NOT NULL AND p.location_hidden = 0
+     ORDER BY m.name`,
+  ).all<MapRow>();
+  const pins: MapPin[] = (rows.results ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    avatarUrl: avatarUrl(r),
+    thumbUrl: thumbUrl(r),
+    city: r.city,
+    country: r.country,
+    lat: r.lat,
+    lon: r.lon,
+    updatedAt: Math.floor(r.location_updated_at / 1000),
+    source: (r.location_source === "admin" ? "admin" : "member") as LocationSource,
+    isMentor: r.is_mentor === 1,
+  }));
+  return c.json({ pins });
 });
 
 // ---------------------------------------------------------------------------
