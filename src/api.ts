@@ -1,6 +1,7 @@
 import type { ProfileInput } from "../shared/profile";
 import type {
   CreateStickyResult,
+  MapPin,
   Me,
   Mentor,
   Profile,
@@ -130,6 +131,40 @@ export function prefetchRoute(hash: string): void {
   } else if (path === "" || path === "/") {
     getMembers().catch(() => {});
   }
+}
+
+
+/** Pins for the academy map — every member with a saved, visible city. */
+export async function getMapPins(): Promise<MapPin[]> {
+  const res = await fetch("/api/map/members");
+  const data = await parse<{ pins: MapPin[] }>(res);
+  return data.pins;
+}
+
+/** Pin yourself to a city from the dataset. Returns the refreshed Me. */
+export async function saveLocation(cityId: number): Promise<Me> {
+  const res = await fetch("/api/me/location", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cityId }),
+  });
+  return parse<Me>(res);
+}
+
+/** Remove your pin from the map entirely. Returns the refreshed Me. */
+export async function clearLocation(): Promise<Me> {
+  const res = await fetch("/api/me/location", { method: "DELETE" });
+  return parse<Me>(res);
+}
+
+/** Hide or show your pin without deleting it. Returns the refreshed Me. */
+export async function setLocationHidden(hidden: boolean): Promise<Me> {
+  const res = await fetch("/api/me/location-visibility", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ hidden }),
+  });
+  return parse<Me>(res);
 }
 
 export async function getMentors(): Promise<Mentor[]> {
